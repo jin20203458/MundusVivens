@@ -128,7 +128,7 @@ public class DialogueOrchestrator : IDialogueOrchestrator
                 SystemInstruction: new Content("system", new List<Part> { new Part(systemPrompt) }),
                 Contents: apiContents,
                 SafetySettings: new List<SafetySetting> { new SafetySetting("HARM_CATEGORY_HARASSMENT", BlockThreshold.BLOCK_NONE) },
-                GenerationConfig: new GenerationConfig(0.7f, 2048, "text/plain")
+                GenerationConfig: new GenerationConfig(null, 2048, "text/plain")
             );
 
             string dialogueResponse = await _apiService.SendMessageAsync(request, ModelTier.Flash35, cancellationToken);
@@ -191,7 +191,7 @@ public class DialogueOrchestrator : IDialogueOrchestrator
         var postRequest = new GeminiRequest(
             SystemInstruction: new Content("system", new List<Part> { new Part(postProcessSystemPrompt) }),
             Contents: new List<Content> { new Content("user", new List<Part> { new Part("분석 시작.") }) },
-            GenerationConfig: new GenerationConfig(0.1f, 400, "application/json")
+            GenerationConfig: new GenerationConfig(null, 400, "application/json")
         );
 
         string postResponse = await _apiService.SendMessageAsync(postRequest, ModelTier.FlashLite, cancellationToken);
