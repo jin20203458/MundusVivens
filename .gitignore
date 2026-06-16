@@ -1,0 +1,20 @@
+# User sensitive configurations & keys
+google-credentials.json
+AppSettings.json
+Config/google-credentials.json
+**/Config/google-credentials.json
+**/AppSettings.json
+
+# Visual Studio & .NET build output
+[Bb]in/
+[Oo]bj/
+.vs/
+*.user
+*.userosscache
+*.suo
+*.userprefs
+*.sln.docstates
+
+# OS files
+.DS_Store
+Thumbs.db
