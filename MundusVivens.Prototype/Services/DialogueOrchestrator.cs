@@ -283,6 +283,15 @@ public class DialogueOrchestrator : IDialogueOrchestrator
 
                     _gossipEngine.ProcessGossipSharing(speaker, listener, originalGossip, content);
 
+                    // 소문 전파를 중기 에피소드 기억으로 귀속
+                    string subjectName = (subject == agentA.AgentId) ? agentA.Persona.Name : ((subject == agentB.AgentId) ? agentB.Persona.Name : subject);
+                    listener.MemoryBox.AddEpisode(new Episode
+                    {
+                        Timestamp = DateTime.Now,
+                        TargetName = speaker.Persona.Name,
+                        Summary = $"{speaker.Persona.Name}(으)로부터 {subjectName}에 대한 소문(\"{content}\")을 들었습니다."
+                    });
+
                     // 소문 유통 메모리 로깅
                     string gossipLog = $"소문 전파 ({speaker.Persona.Name} ➔ {listener.Persona.Name}): 대상={originalGossip.Subject}, 내용=\"{content}\"";
                     await _memoryLogger.LogMemoryEventAsync(gossipLog);
