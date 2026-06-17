@@ -63,7 +63,9 @@ public class DialogueOrchestrator : IDialogueOrchestrator
         {
             var rel = GetOrCreateRelationship(currentSpeaker, currentListener.AgentId);
             var relevantEpisodes = currentSpeaker.MemoryBox.EpisodicMemories
-                .Where(e => e.TargetName == currentListener.Persona.Name || e.TargetName == currentListener.AgentId)
+                .Where(e => e.TargetName == currentListener.Persona.Name || 
+                            e.TargetName == currentListener.AgentId || 
+                            e.Summary.Contains(currentListener.Persona.Name))
                 .Select(e => $"[{e.Timestamp:HH:mm}] {e.Summary}");
             
             string relevantMemoriesStr = string.Join("\n", relevantEpisodes);
