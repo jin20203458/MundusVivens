@@ -18,3 +18,7 @@ Config/google-credentials.json
 # OS files
 .DS_Store
 Thumbs.db
+
+# Runtime output & logs
+**/Logs/
+**/SessionDump.json

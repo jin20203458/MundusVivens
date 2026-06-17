@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 
 namespace MundusVivens.Prototype.Models;
@@ -39,7 +40,7 @@ public class CoreFact
 public class MemoryBox
 {
     public List<ChatMessage> ActiveConversation { get; set; } = new();
-    public Queue<Episode> EpisodicMemories { get; set; } = new();
+    public ConcurrentQueue<Episode> EpisodicMemories { get; set; } = new();
     public List<CoreFact> CoreMemories { get; set; } = new();
 
     public const int MaxEpisodes = 20;
@@ -50,7 +51,7 @@ public class MemoryBox
         EpisodicMemories.Enqueue(episode);
         if (EpisodicMemories.Count > MaxEpisodes)
         {
-            EpisodicMemories.Dequeue();
+            EpisodicMemories.TryDequeue(out _);
         }
     }
 }

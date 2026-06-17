@@ -1,4 +1,5 @@
 using MundusVivens.Prototype.Models;
+using MundusVivens.Prototype.Helpers;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -27,13 +28,12 @@ public class GeminiApiService : IGeminiApiService
     private readonly HttpClient _httpClient;
     private readonly IGoogleAuthService _googleAuthService;
     private readonly AppSettings _settings;
+    private readonly TokenLogger _tokenLogger;
     
-    public int TotalPromptTokens { get; private set; } = 0;
-    public int TotalCompletionTokens { get; private set; } = 0;
-    public int TotalTokens { get; private set; } = 0;
-
-    // Gemini 3.5 Flash pricing: Prompt: $0.075 / 1M tokens, Completion: $0.30 / 1M tokens
-    public double ApproximateCostUsd => (TotalPromptTokens * 0.075 / 1_000_000) + (TotalCompletionTokens * 0.30 / 1_000_000);
+    public int TotalPromptTokens => (int)_tokenLogger.TotalPromptTokens;
+    public int TotalCompletionTokens => (int)_tokenLogger.TotalCompletionTokens;
+    public int TotalTokens => (int)_tokenLogger.TotalTokens;
+    public double ApproximateCostUsd => _tokenLogger.ApproximateCostUsd;
 
     private readonly JsonSerializerOptions _jsonOptions = new()
     {
@@ -42,10 +42,11 @@ public class GeminiApiService : IGeminiApiService
         WriteIndented = true
     };
 
-    public GeminiApiService(HttpClient httpClient, IGoogleAuthService googleAuthService)
+    public GeminiApiService(HttpClient httpClient, IGoogleAuthService googleAuthService, TokenLogger tokenLogger)
     {
         _httpClient = httpClient;
         _googleAuthService = googleAuthService;
+        _tokenLogger = tokenLogger;
         _settings = LoadSettings();
     }
 
@@ -94,9 +95,6 @@ public class GeminiApiService : IGeminiApiService
 
     public void ResetTokenStats()
     {
-        TotalPromptTokens = 0;
-        TotalCompletionTokens = 0;
-        TotalTokens = 0;
     }
 
     public async Task<string> SendMessageAsync(GeminiRequest request, ModelTier? overrideTier = null, CancellationToken cancellationToken = default)
@@ -163,9 +161,13 @@ public class GeminiApiService : IGeminiApiService
 
             if (responseData?.UsageMetadata != null)
             {
-                TotalPromptTokens += responseData.UsageMetadata.PromptTokenCount;
-                TotalCompletionTokens += responseData.UsageMetadata.CandidatesTokenCount;
-                TotalTokens += responseData.UsageMetadata.TotalTokenCount;
+                string modelName = _settings.UseVertexAI ? GetVertexModelName(selectedModelTier) : GetModelName(selectedModelTier);
+                await _tokenLogger.LogUsageAsync(
+                    modelName, 
+                    responseData.UsageMetadata.PromptTokenCount, 
+                    responseData.UsageMetadata.CandidatesTokenCount, 
+                    0
+                );
             }
 
             if (responseData?.PromptFeedback != null && !string.IsNullOrEmpty(responseData.PromptFeedback.BlockReason))

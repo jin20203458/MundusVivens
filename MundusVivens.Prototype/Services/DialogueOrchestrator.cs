@@ -10,23 +10,31 @@ using System.Threading.Tasks;
 
 namespace MundusVivens.Prototype.Services;
 
+public class DialogueResult
+{
+    public string Summary { get; set; } = string.Empty;
+    public List<string> DialogueLines { get; set; } = new();
+}
+
 public interface IDialogueOrchestrator
 {
-    Task RunConversationAsync(AgentInstance agentA, AgentInstance agentB, CancellationToken cancellationToken = default);
+    Task<DialogueResult> RunConversationAsync(AgentInstance agentA, AgentInstance agentB, CancellationToken cancellationToken = default);
 }
 
 public class DialogueOrchestrator : IDialogueOrchestrator
 {
     private readonly IGeminiApiService _apiService;
     private readonly IGossipEngine _gossipEngine;
+    private readonly MemoryEventLogger _memoryLogger;
 
-    public DialogueOrchestrator(IGeminiApiService apiService, IGossipEngine gossipEngine)
+    public DialogueOrchestrator(IGeminiApiService apiService, IGossipEngine gossipEngine, MemoryEventLogger memoryLogger)
     {
         _apiService = apiService;
         _gossipEngine = gossipEngine;
+        _memoryLogger = memoryLogger;
     }
 
-    public async Task RunConversationAsync(AgentInstance agentA, AgentInstance agentB, CancellationToken cancellationToken = default)
+    public async Task<DialogueResult> RunConversationAsync(AgentInstance agentA, AgentInstance agentB, CancellationToken cancellationToken = default)
     {
         Console.WriteLine($"\n=======================================================");
         Console.WriteLine($"💬 대화 시작: {agentA.Persona.Name} ({agentA.Persona.Job})  ◀ ▷  {agentB.Persona.Name} ({agentB.Persona.Job})");
@@ -222,6 +230,13 @@ public class DialogueOrchestrator : IDialogueOrchestrator
             Console.WriteLine($"   * {agentA.Persona.Name} ➔ {agentB.Persona.Name}: 호감도 {relAToB.Liking} ({likingDeltaAToB:+#;-#;0}), 신뢰도 {relAToB.Trust} ({trustDeltaAToB:+#;-#;0})");
             Console.WriteLine($"   * {agentB.Persona.Name} ➔ {agentA.Persona.Name}: 호감도 {relBToA.Liking} ({likingDeltaBToA:+#;-#;0}), 신뢰도 {relBToA.Trust} ({trustDeltaBToA:+#;-#;0})");
 
+            // 메모리 이벤트 로깅
+            string logMsg = $"대화 발생 ({agentA.Persona.Name} <-> {agentB.Persona.Name}): {summary}\n" +
+                            $"   관계 변화:\n" +
+                            $"     * {agentA.Persona.Name} ➔ {agentB.Persona.Name}: 호감도 {relAToB.Liking} ({likingDeltaAToB:+#;-#;0}), 신뢰도 {relAToB.Trust} ({trustDeltaAToB:+#;-#;0})\n" +
+                            $"     * {agentB.Persona.Name} ➔ {agentA.Persona.Name}: 호감도 {relBToA.Liking} ({likingDeltaBToA:+#;-#;0}), 신뢰도 {relBToA.Trust} ({trustDeltaBToA:+#;-#;0})";
+            await _memoryLogger.LogMemoryEventAsync(logMsg);
+
             if (analysis.GossipsExchanged != null)
             {
                 foreach (var gossipElem in analysis.GossipsExchanged)
@@ -267,10 +282,22 @@ public class DialogueOrchestrator : IDialogueOrchestrator
                     }
 
                     _gossipEngine.ProcessGossipSharing(speaker, listener, originalGossip, content);
+
+                    // 소문 유통 메모리 로깅
+                    string gossipLog = $"소문 전파 ({speaker.Persona.Name} ➔ {listener.Persona.Name}): 대상={originalGossip.Subject}, 내용=\"{content}\"";
+                    await _memoryLogger.LogMemoryEventAsync(gossipLog);
                 }
             }
 
             Console.WriteLine($"📝 기록된 에피소드 요약: \"{summary}\"");
+
+            var lines = conversationHistory.Select(m => {
+                string name = m.Role == agentA.AgentId ? agentA.Persona.Name : agentB.Persona.Name;
+                return $"{name}: {m.Text}";
+            }).ToList();
+
+            Console.WriteLine($"=======================================================\n");
+            return new DialogueResult { Summary = summary, DialogueLines = lines };
         }
         else
         {
@@ -278,6 +305,14 @@ public class DialogueOrchestrator : IDialogueOrchestrator
             Console.WriteLine($"Raw Response: {postResponse}");
         }
         Console.WriteLine($"=======================================================\n");
+        return new DialogueResult
+        {
+            Summary = "대화 분석에 실패했습니다.",
+            DialogueLines = conversationHistory.Select(m => {
+                string name = m.Role == agentA.AgentId ? agentA.Persona.Name : agentB.Persona.Name;
+                return $"{name}: {m.Text}";
+            }).ToList()
+        };
     }
 
     private Relationship GetOrCreateRelationship(AgentInstance agent, string targetId)

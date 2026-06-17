@@ -1,68 +1,283 @@
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using MundusVivens.Prototype.Helpers;
 using MundusVivens.Prototype.Models;
 using MundusVivens.Prototype.Services;
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.IO;
+using System.Linq;
 using System.Net.Http;
+using System.Text;
+using System.Text.Json;
 using System.Threading.Tasks;
 
 namespace MundusVivens.Prototype;
 
-class Program
+public class Program
 {
-    static async Task Main(string[] args)
+    public static void Main(string[] args)
     {
-        Console.OutputEncoding = System.Text.Encoding.UTF8;
+        Console.OutputEncoding = Encoding.UTF8;
         Console.WriteLine("=======================================================");
-        Console.WriteLine("🌍 Project Mundus Vivens — Phase 1 콘솔 시뮬레이터");
+        Console.WriteLine("🌍 Project Mundus Vivens — Phase 2 Hybrid Server");
         Console.WriteLine("=======================================================\n");
 
-        // 1. DI 컨테이너 설정
-        var services = new ServiceCollection();
-        services.AddHttpClient();
-        services.AddSingleton<IGoogleAuthService, GoogleAuthService>();
-        services.AddSingleton<IGeminiApiService, GeminiApiService>();
-        services.AddSingleton<IGossipEngine, GossipEngine>();
-        services.AddSingleton<IDialogueOrchestrator, DialogueOrchestrator>();
+        var builder = WebApplication.CreateBuilder(args);
+
+        // 1. 설정 불러오기
+        var config = builder.Configuration;
+        var maxGlobalConcurrent = config.GetValue<int>("SimulationConfig:MaxGlobalConcurrent", 2);
+        var sessionId = config.GetValue<string>("SimulationConfig:SessionId") ?? DateTime.Now.ToString("yyyyMMdd_HHmmss");
+
+        Console.WriteLine($"[Config] SessionId: {sessionId}");
+        Console.WriteLine($"[Config] MaxGlobalConcurrent: {maxGlobalConcurrent}");
+
+        // 2. 의존성 등록
+        builder.Services.AddHttpClient();
         
-        var serviceProvider = services.BuildServiceProvider();
-        var orchestrator = serviceProvider.GetRequiredService<IDialogueOrchestrator>();
-        var apiService = serviceProvider.GetRequiredService<IGeminiApiService>();
+        // 싱글톤 로거 헬퍼 등록
+        var tokenLogger = new TokenLogger(sessionId);
+        var memoryLogger = new MemoryEventLogger(sessionId);
+        builder.Services.AddSingleton(tokenLogger);
+        builder.Services.AddSingleton(memoryLogger);
 
-        // 2. 에이전트 초기화
-        var agents = InitializeAgents();
+        builder.Services.AddSingleton<IGoogleAuthService, GoogleAuthService>();
+        builder.Services.AddSingleton<IGeminiApiService, GeminiApiService>();
+        builder.Services.AddSingleton<IGossipEngine, GossipEngine>();
+        builder.Services.AddSingleton<IDialogueOrchestrator, DialogueOrchestrator>();
 
-        // 3. 소문 시딩 (에바가 카일에 대한 소문을 이미 알고 있음)
-        SeedGossip(agents);
+        // 에이전트 인메모리 저장소
+        var initialAgents = InitializeAgents();
+        SeedGossip(initialAgents);
+        builder.Services.AddSingleton<ConcurrentDictionary<string, AgentInstance>>(initialAgents);
+        builder.Services.AddSingleton<Func<ConcurrentDictionary<string, AgentInstance>>>(sp => () => sp.GetRequiredService<ConcurrentDictionary<string, AgentInstance>>());
 
-        // 4. 시나리오 실행
-        try
+        // 비동기 스케줄러 등록
+        builder.Services.AddSingleton<InteractionScheduler>(sp =>
         {
-            // 1단계: 에바와 바르트가 술집에서 만남
-            Console.WriteLine("▶ [시나리오 1단계] 술집에서 에바와 바르트의 조우 및 대화");
-            agents["npc_eva"].Status.CurrentLocation = "술집 (Tavern)";
-            agents["npc_bart"].Status.CurrentLocation = "술집 (Tavern)";
-            await orchestrator.RunConversationAsync(agents["npc_eva"], agents["npc_bart"]);
+            var orchestrator = sp.GetRequiredService<IDialogueOrchestrator>();
+            var accessor = sp.GetRequiredService<Func<ConcurrentDictionary<string, AgentInstance>>>();
+            var logger = sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<InteractionScheduler>>();
+            return new InteractionScheduler(orchestrator, accessor, logger, maxGlobalConcurrent);
+        });
+        builder.Services.AddHostedService(sp => sp.GetRequiredService<InteractionScheduler>());
 
-            // 2단계: 바르트가 성당에 가서 카일을 만남
-            Console.WriteLine("▶ [시나리오 2단계] 성당에서 바르트와 카일의 조우 및 대화");
-            agents["npc_bart"].Status.CurrentLocation = "성당 (Church)";
-            agents["npc_kyle"].Status.CurrentLocation = "성당 (Church)";
-            await orchestrator.RunConversationAsync(agents["npc_bart"], agents["npc_kyle"]);
+        // gRPC 서비스 등록
+        builder.Services.AddGrpc();
 
-            // 5. 최종 데이터 분석 출력
-            PrintFinalStatusReport(agents, apiService);
-        }
-        catch (Exception ex)
+        var app = builder.Build();
+
+        // 3. gRPC 라우팅 매핑
+        app.MapGrpcService<MundusVivensGrpcService>();
+
+        // 4. Minimal APIs (REST API) 라우팅 매핑
+        
+        // 현재 모든 에이전트 정보 조회
+        app.MapGet("/api/agents", (ConcurrentDictionary<string, AgentInstance> agents) =>
         {
-            Console.WriteLine($"\n[Critical Error] 시뮬레이션 중 치명적 오류 발생: {ex.Message}");
-            Console.WriteLine(ex.StackTrace);
-        }
+            return Results.Ok(agents.Values.Select(a => new
+            {
+                a.AgentId,
+                a.Persona.Name,
+                a.Persona.Job,
+                a.Status.CurrentLocation,
+                a.Status.Emotion,
+                a.Status.Activity,
+                a.Status.IsInConversation,
+                KnownGossips = a.KnownGossips.Values.Select(g => new
+                {
+                    g.Gossip.GossipId,
+                    g.Gossip.Subject,
+                    g.Gossip.Content,
+                    g.SubjectiveBelief
+                }),
+                Relationships = a.RelationshipMap.Values.Select(r => new
+                {
+                    r.TargetAgentId,
+                    r.Liking,
+                    r.Trust
+                })
+            }));
+        });
+
+        // 특정 에이전트 조회
+        app.MapGet("/api/agents/{agentId}", (string agentId, ConcurrentDictionary<string, AgentInstance> agents) =>
+        {
+            if (!agents.TryGetValue(agentId, out var agent))
+            {
+                return Results.NotFound(new { Message = $"에이전트 '{agentId}'를 찾을 수 없습니다." });
+            }
+            return Results.Ok(agent);
+        });
+
+        // 에이전트 강제 리셋
+        app.MapPost("/api/agents/reset", (ConcurrentDictionary<string, AgentInstance> agents) =>
+        {
+            var resetData = InitializeAgents();
+            SeedGossip(resetData);
+            
+            agents.Clear();
+            foreach (var kv in resetData)
+            {
+                agents[kv.Key] = kv.Value;
+            }
+            
+            return Results.Ok(new { Message = "시뮬레이션 인메모리 데이터가 초기 상태로 리셋되었습니다." });
+        });
+
+        // 인메모리 세션 스냅샷 파일 저장
+        app.MapPost("/api/agents/save", (ConcurrentDictionary<string, AgentInstance> agents) =>
+        {
+            try
+            {
+                var savePath = Path.Combine(Directory.GetCurrentDirectory(), "SessionDump.json");
+                var options = new JsonSerializerOptions { WriteIndented = true };
+                var json = JsonSerializer.Serialize(agents, options);
+                File.WriteAllText(savePath, json, Encoding.UTF8);
+                return Results.Ok(new { Message = $"현재 인메모리 세션이 성공적으로 저장되었습니다.", Path = savePath });
+            }
+            catch (Exception ex)
+            {
+                return Results.InternalServerError(new { Error = ex.Message });
+            }
+        });
+
+        // 인메모리 세션 스냅샷 파일 로드
+        app.MapPost("/api/agents/load", (ConcurrentDictionary<string, AgentInstance> agents) =>
+        {
+            try
+            {
+                var savePath = Path.Combine(Directory.GetCurrentDirectory(), "SessionDump.json");
+                if (!File.Exists(savePath))
+                {
+                    return Results.NotFound(new { Message = "저장된 세션 백업 파일(SessionDump.json)을 찾을 수 없습니다." });
+                }
+
+                var json = File.ReadAllText(savePath, Encoding.UTF8);
+                var loadedAgents = JsonSerializer.Deserialize<ConcurrentDictionary<string, AgentInstance>>(json);
+                if (loadedAgents != null)
+                {
+                    agents.Clear();
+                    foreach (var kv in loadedAgents)
+                    {
+                        agents[kv.Key] = kv.Value;
+                    }
+                    return Results.Ok(new { Message = "세션 백업 파일로부터 인메모리 데이터를 성공적으로 로드했습니다." });
+                }
+                return Results.BadRequest(new { Message = "데이터 역직렬화에 실패했습니다." });
+            }
+            catch (Exception ex)
+            {
+                return Results.InternalServerError(new { Error = ex.Message });
+            }
+        });
+
+        // 대화 실행 (REST API 방식)
+        app.MapPost("/api/interaction/nearby", async (
+            InteractionRequest request,
+            InteractionScheduler scheduler,
+            ConcurrentDictionary<string, AgentInstance> agents,
+            CancellationToken ct) =>
+        {
+            bool wait = request.Wait ?? true;
+            
+            var result = await scheduler.QueueDialogueJobAsync(request.AgentIdA, request.AgentIdB, wait, ct);
+            
+            if (!result.Success)
+            {
+                return Results.BadRequest(new { Error = result.ErrorMessage });
+            }
+
+            if (wait)
+            {
+                return Results.Ok(new
+                {
+                    result.JobId,
+                    Status = "Completed",
+                    result.Summary,
+                    result.DialogueLines
+                });
+            }
+
+            return Results.Accepted($"/api/interaction/active", new
+            {
+                TaskId = result.JobId,
+                Status = "Queued",
+                Message = result.Summary
+            });
+        });
+
+        // 현재 대기 중이거나 진행 중인 작업 조회
+        app.MapGet("/api/interaction/active", (InteractionScheduler scheduler) =>
+        {
+            return Results.Ok(scheduler.GetActiveAndPendingJobs());
+        });
+
+        // 토큰 실시간 통계 조회
+        app.MapGet("/api/logs/tokens", (TokenLogger logger) =>
+        {
+            return Results.Ok(new
+            {
+                logger.TotalPromptTokens,
+                logger.TotalCompletionTokens,
+                logger.TotalThinkingTokens,
+                logger.TotalTokens,
+                logger.ApproximateCostUsd
+            });
+        });
+
+        // 기억 전문 로그 읽기
+        app.MapGet("/api/logs/memory", async (MemoryEventLogger logger) =>
+        {
+            var content = await logger.ReadAllLogsAsync();
+            return Results.Text(content, "text/plain", Encoding.UTF8);
+        });
+
+        // 소문 강제 주입
+        app.MapPost("/api/gossip/inject", (
+            GossipInjectRequest request,
+            ConcurrentDictionary<string, AgentInstance> agents) =>
+        {
+            if (!agents.TryGetValue(request.TargetAgentId, out var targetAgent))
+            {
+                return Results.NotFound(new { Error = $"대상 에이전트 '{request.TargetAgentId}'를 찾을 수 없습니다." });
+            }
+
+            var gossip = new GossipItem
+            {
+                GossipId = $"gossip_{request.SubjectId}_{Guid.NewGuid().ToString().Substring(0, 5)}",
+                Subject = request.SubjectId,
+                Content = request.Content,
+                SourceAgentId = "ExternalREST",
+                BaseCredibility = 80,
+                MutationCount = 0
+            };
+
+            targetAgent.KnownGossips[gossip.GossipId] = new KnownGossip
+            {
+                Gossip = gossip,
+                SubjectiveBelief = 0.8,
+                HasSharedWithOthers = false
+            };
+
+            return Results.Ok(new { Message = $"에이전트 '{targetAgent.Persona.Name}'에게 소문 주입 완료" });
+        });
+
+        app.Run();
     }
 
-    private static Dictionary<string, AgentInstance> InitializeAgents()
+    // REST API 바인딩 모델 정의
+    public record InteractionRequest(string AgentIdA, string AgentIdB, bool? Wait);
+    public record GossipInjectRequest(string SubjectId, string Content, string TargetAgentId);
+
+    private static ConcurrentDictionary<string, AgentInstance> InitializeAgents()
     {
-        var dict = new Dictionary<string, AgentInstance>();
+        var dict = new ConcurrentDictionary<string, AgentInstance>();
 
         // 1. 카일 (Kyle) - 성직자
         var kyle = new AgentInstance
@@ -155,7 +370,7 @@ class Program
         };
     }
 
-    private static void SeedGossip(Dictionary<string, AgentInstance> agents)
+    private static void SeedGossip(ConcurrentDictionary<string, AgentInstance> agents)
     {
         var gossip = new GossipItem
         {
@@ -176,63 +391,5 @@ class Program
 
         Console.WriteLine($"📢 [System Info] 에바가 '{gossip.Subject}'에 관한 새로운 비밀 소문을 알게 되었습니다.");
         Console.WriteLine($"   => 내용: \"{gossip.Content}\" (신뢰도: {gossip.BaseCredibility}%)\n");
-    }
-
-    private static void PrintFinalStatusReport(Dictionary<string, AgentInstance> agents, IGeminiApiService apiService)
-    {
-        Console.WriteLine("\n=======================================================");
-        Console.WriteLine("📊 시뮬레이션 종료: 전체 에이전트 상태 최종 보고서");
-        Console.WriteLine("=======================================================");
-
-        foreach (var kvp in agents)
-        {
-            var agent = kvp.Value;
-            Console.WriteLine($"\n👤 [{agent.Persona.Name}] ({agent.Persona.Job})");
-            Console.WriteLine($"   * 감정 상태: {agent.Status.Emotion}");
-            Console.WriteLine($"   * 최근 에피소드 기억:");
-            if (agent.MemoryBox.EpisodicMemories.Any())
-            {
-                foreach (var ep in agent.MemoryBox.EpisodicMemories)
-                {
-                    Console.WriteLine($"     - [{ep.Timestamp:HH:mm}] 대상: {ep.TargetName} / 내용: {ep.Summary}");
-                }
-            }
-            else
-            {
-                Console.WriteLine("     - 없음");
-            }
-
-            Console.WriteLine($"   * 관계 그래프:");
-            foreach (var relKvp in agent.RelationshipMap)
-            {
-                var targetName = agents[relKvp.Key].Persona.Name;
-                Console.WriteLine($"     - ➔ {targetName}: 호감도 {relKvp.Value.Liking}, 신뢰도 {relKvp.Value.Trust}");
-            }
-
-            Console.WriteLine($"   * 알고 있는 소문 목록:");
-            if (agent.KnownGossips.Any())
-            {
-                foreach (var gossipKvp in agent.KnownGossips)
-                {
-                    var kg = gossipKvp.Value;
-                    var subjectName = agents.ContainsKey(kg.Gossip.Subject) ? agents[kg.Gossip.Subject].Persona.Name : kg.Gossip.Subject;
-                    Console.WriteLine($"     - 소문 대상: {subjectName} / 확신도: {kg.SubjectiveBelief:P0}");
-                    Console.WriteLine($"       내용: \"{kg.Gossip.Content}\" (변형 횟수: {kg.Gossip.MutationCount})");
-                }
-            }
-            else
-            {
-                Console.WriteLine("     - 없음");
-            }
-        }
-
-        Console.WriteLine("\n=======================================================");
-        Console.WriteLine("💸 API 사용량 및 비용 분석");
-        Console.WriteLine("=======================================================");
-        Console.WriteLine($"   * 총 Prompt 토큰 수: {apiService.TotalPromptTokens:N0} tokens");
-        Console.WriteLine($"   * 총 Completion 토큰 수: {apiService.TotalCompletionTokens:N0} tokens");
-        Console.WriteLine($"   * 총 사용 토큰 수: {apiService.TotalTokens:N0} tokens");
-        Console.WriteLine($"   * 예상 발생 비용: ${apiService.ApproximateCostUsd:F6} (약 {apiService.ApproximateCostUsd * 1350:F2}원)");
-        Console.WriteLine("=======================================================\n");
     }
 }
