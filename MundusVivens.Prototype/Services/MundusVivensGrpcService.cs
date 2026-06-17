@@ -112,4 +112,40 @@ public class MundusVivensGrpcService : MundusVivensGrpc.MundusVivensGrpcBase
             Message = $"에이전트 '{targetAgent.Persona.Name}'에게 소문 주입 성공."
         });
     }
+
+    public override Task<UpdateAgentStatusResponse> UpdateAgentStatus(UpdateAgentStatusRequest request, ServerCallContext context)
+    {
+        var agents = _agentsAccessor();
+        if (!agents.TryGetValue(request.AgentId, out var agent))
+        {
+            return Task.FromResult(new UpdateAgentStatusResponse
+            {
+                Success = false,
+                Message = $"에이전트 '{request.AgentId}'를 찾을 수 없습니다."
+            });
+        }
+
+        // 스레드 세이프하게 상태 갱신
+        if (!string.IsNullOrWhiteSpace(request.Location)) agent.Status.CurrentLocation = request.Location;
+        if (!string.IsNullOrWhiteSpace(request.Emotion)) agent.Status.Emotion = request.Emotion;
+        if (!string.IsNullOrWhiteSpace(request.Activity)) agent.Status.Activity = request.Activity;
+
+        Console.WriteLine($"🔄 [gRPC] 에이전트 '{agent.Persona.Name}' 상태 업데이트: 위치={agent.Status.CurrentLocation}, 감정={agent.Status.Emotion}, 행동={agent.Status.Activity}");
+
+        return Task.FromResult(new UpdateAgentStatusResponse
+        {
+            Success = true,
+            Message = $"에이전트 '{agent.Persona.Name}'의 상태가 동기화되었습니다."
+        });
+    }
+
+    public override Task<ProcessWorldTickResponse> ProcessWorldTick(ProcessWorldTickRequest request, ServerCallContext context)
+    {
+        Console.WriteLine($"⏱️ [gRPC] 월드 틱 진행 통보 수신: 틱 번호 {request.TickNumber}");
+        return Task.FromResult(new ProcessWorldTickResponse
+        {
+            Success = true,
+            Message = $"틱 {request.TickNumber} 처리가 정상적으로 완료되었습니다."
+        });
+    }
 }

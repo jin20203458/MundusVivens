@@ -1,3 +1,4 @@
 <Solution>
+  <Project Path="MundusVivens.GameServer.Mock/MundusVivens.GameServer.Mock.csproj" />
   <Project Path="MundusVivens.Prototype/MundusVivens.Prototype.csproj" />
 </Solution>
