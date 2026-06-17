@@ -74,3 +74,45 @@ public record UsageMetadata(
 public record PromptFeedback(
     [property: JsonPropertyName("blockReason")] string BlockReason
 );
+
+public class ConversationAnalysis
+{
+    [JsonPropertyName("summary")]
+    public string Summary { get; set; } = string.Empty;
+
+    [JsonPropertyName("relationship_changes")]
+    public RelationshipChanges RelationshipChanges { get; set; } = new();
+
+    [JsonPropertyName("gossips_exchanged")]
+    public List<GossipExchangeInfo> GossipsExchanged { get; set; } = new();
+}
+
+public class RelationshipChanges
+{
+    [JsonPropertyName("liking_delta_a_to_b")]
+    public int LikingDeltaAToB { get; set; } = 0;
+
+    [JsonPropertyName("trust_delta_a_to_b")]
+    public int TrustDeltaAToB { get; set; } = 0;
+
+    [JsonPropertyName("liking_delta_b_to_a")]
+    public int LikingDeltaBToA { get; set; } = 0;
+
+    [JsonPropertyName("trust_delta_b_to_a")]
+    public int TrustDeltaBToA { get; set; } = 0;
+}
+
+public class GossipExchangeInfo
+{
+    [JsonPropertyName("subject")]
+    public string Subject { get; set; } = string.Empty;
+
+    [JsonPropertyName("content")]
+    public string Content { get; set; } = string.Empty;
+
+    [JsonPropertyName("credibility_rating")]
+    public int CredibilityRating { get; set; } = 50;
+
+    [JsonPropertyName("speaker_id")]
+    public string SpeakerId { get; set; } = string.Empty;
+}

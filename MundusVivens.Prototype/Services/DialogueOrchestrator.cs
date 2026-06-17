@@ -1,4 +1,5 @@
 using MundusVivens.Prototype.Models;
+using MundusVivens.Prototype.Helpers;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -195,24 +196,21 @@ public class DialogueOrchestrator : IDialogueOrchestrator
         );
 
         string postResponse = await _apiService.SendMessageAsync(postRequest, ModelTier.FlashLite, cancellationToken);
-        postResponse = StripMarkdown(postResponse);
+        var analysis = LlmJsonParser.DeserializeSafe<ConversationAnalysis>(postResponse);
 
-        try
+        if (analysis != null)
         {
-            using var doc = JsonDocument.Parse(postResponse);
-            var root = doc.RootElement;
-
-            string summary = root.GetProperty("summary").GetString() ?? "대화 완료";
+            string summary = analysis.Summary;
             var timestamp = DateTime.Now;
 
             agentA.MemoryBox.AddEpisode(new Episode { Timestamp = timestamp, TargetName = agentB.Persona.Name, Summary = summary });
             agentB.MemoryBox.AddEpisode(new Episode { Timestamp = timestamp, TargetName = agentA.Persona.Name, Summary = summary });
 
-            var changes = root.GetProperty("relationship_changes");
-            int likingDeltaAToB = changes.GetProperty("liking_delta_a_to_b").GetInt32();
-            int trustDeltaAToB = changes.GetProperty("trust_delta_a_to_b").GetInt32();
-            int likingDeltaBToA = changes.GetProperty("liking_delta_b_to_a").GetInt32();
-            int trustDeltaBToA = changes.GetProperty("trust_delta_b_to_a").GetInt32();
+            // 관계 업데이트
+            int likingDeltaAToB = analysis.RelationshipChanges.LikingDeltaAToB;
+            int trustDeltaAToB = analysis.RelationshipChanges.TrustDeltaAToB;
+            int likingDeltaBToA = analysis.RelationshipChanges.LikingDeltaBToA;
+            int trustDeltaBToA = analysis.RelationshipChanges.TrustDeltaBToA;
 
             relAToB.Liking = Math.Clamp(relAToB.Liking + likingDeltaAToB, -100, 100);
             relAToB.Trust = Math.Clamp(relAToB.Trust + trustDeltaAToB, 0, 100);
@@ -224,13 +222,13 @@ public class DialogueOrchestrator : IDialogueOrchestrator
             Console.WriteLine($"   * {agentA.Persona.Name} ➔ {agentB.Persona.Name}: 호감도 {relAToB.Liking} ({likingDeltaAToB:+#;-#;0}), 신뢰도 {relAToB.Trust} ({trustDeltaAToB:+#;-#;0})");
             Console.WriteLine($"   * {agentB.Persona.Name} ➔ {agentA.Persona.Name}: 호감도 {relBToA.Liking} ({likingDeltaBToA:+#;-#;0}), 신뢰도 {relBToA.Trust} ({trustDeltaBToA:+#;-#;0})");
 
-            if (root.TryGetProperty("gossips_exchanged", out var gossipsArray) && gossipsArray.ValueKind == JsonValueKind.Array)
+            if (analysis.GossipsExchanged != null)
             {
-                foreach (var gossipElem in gossipsArray.EnumerateArray())
+                foreach (var gossipElem in analysis.GossipsExchanged)
                 {
-                    string subject = gossipElem.GetProperty("subject").GetString() ?? string.Empty;
-                    string content = gossipElem.GetProperty("content").GetString() ?? string.Empty;
-                    string speakerId = gossipElem.GetProperty("speaker_id").GetString() ?? string.Empty;
+                    string subject = gossipElem.Subject;
+                    string content = gossipElem.Content;
+                    string speakerId = gossipElem.SpeakerId;
 
                     if (string.IsNullOrWhiteSpace(subject) || string.IsNullOrWhiteSpace(content)) continue;
 
@@ -274,9 +272,9 @@ public class DialogueOrchestrator : IDialogueOrchestrator
 
             Console.WriteLine($"📝 기록된 에피소드 요약: \"{summary}\"");
         }
-        catch (Exception ex)
+        else
         {
-            Console.WriteLine($"[Error] 사후 데이터 분석 파싱 실패: {ex.Message}");
+            Console.WriteLine($"[Error] 사후 데이터 분석 파싱 실패 (LlmJsonParser 반환값이 null입니다).");
             Console.WriteLine($"Raw Response: {postResponse}");
         }
         Console.WriteLine($"=======================================================\n");
@@ -296,19 +294,5 @@ public class DialogueOrchestrator : IDialogueOrchestrator
     {
         if (string.IsNullOrWhiteSpace(response)) return string.Empty;
         return response.Trim().Replace("\"", "");
-    }
-
-    private string StripMarkdown(string text)
-    {
-        if (string.IsNullOrWhiteSpace(text)) return string.Empty;
-        string clean = text.Trim();
-        
-        int firstBrace = clean.IndexOf('{');
-        int lastBrace = clean.LastIndexOf('}');
-        if (firstBrace != -1 && lastBrace != -1 && lastBrace > firstBrace)
-        {
-            return clean.Substring(firstBrace, lastBrace - firstBrace + 1);
-        }
-        return clean;
     }
 }
