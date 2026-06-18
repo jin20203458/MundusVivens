@@ -50,6 +50,7 @@ public class Program
         builder.Services.AddSingleton<IGeminiApiService, GeminiApiService>();
         builder.Services.AddSingleton<IGossipEngine, GossipEngine>();
         builder.Services.AddSingleton<IDialogueOrchestrator, DialogueOrchestrator>();
+        builder.Services.AddSingleton<IPlayerDialogueManager, PlayerDialogueManager>();
         builder.Services.AddSingleton<IWorldEventBroadcaster, WorldEventBroadcaster>();
 
         // 에이전트 인메모리 저장소
@@ -375,6 +376,28 @@ public class Program
         bart.MemoryBox.CoreMemories.Add(new CoreFact("과거 전쟁터에서 사제들의 배신으로 전우를 잃어 종교인을 극도로 불신함", 10));
         dict[bart.AgentId] = bart;
 
+        // 4. 플레이어 (Player) - 특수 에이전트 (4-B-4)
+        var player = new AgentInstance
+        {
+            AgentId = "player",
+            Persona = new Persona
+            {
+                Name = "플레이어",
+                Job = "여행자",
+                ToneStyle = "자유로운 말투",
+                Backstory = "가상 세계를 탐험하며 주민들의 비밀을 파헤치는 이방인입니다.",
+                CoreValues = "호기심, 진실 규명",
+                Extroversion = 0.5
+            },
+            Status = new AgentStatus
+            {
+                CurrentLocation = "광장 (Square)",
+                Emotion = "평온함",
+                Activity = "마을 둘러보기"
+            }
+        };
+        dict[player.AgentId] = player;
+
         // 초기 관계 세팅
         SetInitialRelationship(eva, "npc_bart", 20, 70);
         SetInitialRelationship(bart, "npc_eva", 25, 75);
@@ -384,6 +407,11 @@ public class Program
 
         SetInitialRelationship(bart, "npc_kyle", -15, 30);
         SetInitialRelationship(kyle, "npc_bart", 0, 50);
+
+        // 플레이어에 대한 NPC들의 초기 관계 세팅
+        SetInitialRelationship(kyle, "player", 0, 50);
+        SetInitialRelationship(eva, "player", 15, 60);
+        SetInitialRelationship(bart, "player", -5, 40);
 
         return dict;
     }

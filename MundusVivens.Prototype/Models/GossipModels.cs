@@ -15,4 +15,8 @@ public class KnownGossip
     public GossipItem Gossip { get; set; } = new();
     public double SubjectiveBelief { get; set; } = 0.5;      // 주관적 확신도 (0.0 ~ 1.0)
     public bool HasSharedWithOthers { get; set; } = false;   // 다른이에게 발설 여부
+
+    // 🆕 소문 전파 경로 추적 필드 (4-B-6)
+    public string DirectInformantAgentId { get; set; } = string.Empty; // 직전 유포자 (누가 말해주었는가)
+    public List<string> PropagationPath { get; set; } = new();         // 누적 전파 경로 (A ➔ B ➔ C)
 }

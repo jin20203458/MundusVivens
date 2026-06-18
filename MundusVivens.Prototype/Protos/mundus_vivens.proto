@@ -16,6 +16,11 @@ service MundusVivensGrpc {
 
   // 🆕 관찰자 모드: 실시간 이벤트 스트림 구독 (Phase 4-B 신규)
   rpc SubscribeWorldEvents (SubscribeRequest) returns (stream WorldEvent);
+
+  // 🆕 참여자 모드: 플레이어-NPC 간 대화 상호작용 (Phase 4-B 신규)
+  rpc StartPlayerDialogue (StartPlayerDialogueRequest) returns (StartPlayerDialogueResponse);
+  rpc SendPlayerMessage (SendPlayerMessageRequest) returns (SendPlayerMessageResponse);
+  rpc EndPlayerDialogue (EndPlayerDialogueRequest) returns (EndPlayerDialogueResponse);
 }
 
 message TriggerDialogueRequest {
@@ -144,4 +149,34 @@ message RelationshipEvent {
 
 message TickEvent {
   int32 tick_number = 1;
+}
+
+message StartPlayerDialogueRequest {
+  string player_id = 1;
+  string npc_id = 2;
+}
+
+message StartPlayerDialogueResponse {
+  string session_id = 1;
+  string greeting = 2;
+  bool success = 3;
+  string message = 4;
+}
+
+message SendPlayerMessageRequest {
+  string session_id = 1;
+  string message = 2;
+}
+
+message SendPlayerMessageResponse {
+  string reply = 1;
+}
+
+message EndPlayerDialogueRequest {
+  string session_id = 1;
+}
+
+message EndPlayerDialogueResponse {
+  bool success = 1;
+  string summary = 2;
 }

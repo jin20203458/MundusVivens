@@ -53,6 +53,13 @@ public class GossipEngine : IGossipEngine
         // 소문 전파 및 변형 처리
         bool isMutated = !originalGossip.Content.Trim().Equals(sharedContent.Trim(), StringComparison.OrdinalIgnoreCase);
 
+        // 화자의 기존 소문 전파 경로 조회
+        List<string> speakerPath = new();
+        if (speaker.KnownGossips.TryGetValue(originalGossip.GossipId, out var speakerKnown))
+        {
+            speakerPath = new List<string>(speakerKnown.PropagationPath);
+        }
+
         // 상대방에게 소문 주입
         if (!listener.KnownGossips.TryGetValue(originalGossip.GossipId, out var known))
         {
@@ -68,7 +75,9 @@ public class GossipEngine : IGossipEngine
                     MutationCount = originalGossip.MutationCount + (isMutated ? 1 : 0)
                 },
                 // 상대방(listener)이 화자(speaker)를 믿는 신뢰도만큼 이 소문을 주입받을 때의 주관적 믿음 설정
-                SubjectiveBelief = 0.5
+                SubjectiveBelief = 0.5,
+                DirectInformantAgentId = speaker.AgentId,
+                PropagationPath = new List<string>(speakerPath) { speaker.AgentId }
             };
 
             if (listener.RelationshipMap.TryGetValue(speaker.AgentId, out var rel))

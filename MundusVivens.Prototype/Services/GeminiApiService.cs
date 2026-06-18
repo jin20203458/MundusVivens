@@ -199,6 +199,7 @@ public class GeminiApiService : IGeminiApiService
                 }
             }
 
+            Console.WriteLine($"[Error] Gemini API 응답 데이터 오류. Raw Response: {responseBody}");
             return "[System Error]: 응답 데이터가 유효하지 않습니다.";
         }
         catch (Exception ex)

@@ -1,5 +1,6 @@
 using MundusVivens.Prototype.Models;
 using MundusVivens.Prototype.Helpers;
+using MundusVivens.Prototype.Protos;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -14,7 +15,7 @@ public class DialogueResult
 {
     public string Summary { get; set; } = string.Empty;
     public List<string> DialogueLines { get; set; } = new();
-    public List<MundusVivens.Prototype.Protos.DialogueLine> StructuredLines { get; set; } = new();
+    public List<DialogueLine> StructuredLines { get; set; } = new();
 }
 
 public interface IDialogueOrchestrator
@@ -27,12 +28,18 @@ public class DialogueOrchestrator : IDialogueOrchestrator
     private readonly IGeminiApiService _apiService;
     private readonly IGossipEngine _gossipEngine;
     private readonly MemoryEventLogger _memoryLogger;
+    private readonly IWorldEventBroadcaster _broadcaster;
 
-    public DialogueOrchestrator(IGeminiApiService apiService, IGossipEngine gossipEngine, MemoryEventLogger memoryLogger)
+    public DialogueOrchestrator(
+        IGeminiApiService apiService,
+        IGossipEngine gossipEngine,
+        MemoryEventLogger memoryLogger,
+        IWorldEventBroadcaster broadcaster)
     {
         _apiService = apiService;
         _gossipEngine = gossipEngine;
         _memoryLogger = memoryLogger;
+        _broadcaster = broadcaster;
     }
 
     public async Task<DialogueResult> RunConversationAsync(AgentInstance agentA, AgentInstance agentB, CancellationToken cancellationToken = default)
@@ -265,6 +272,37 @@ public class DialogueOrchestrator : IDialogueOrchestrator
             Console.WriteLine($"   * {agentA.Persona.Name} ➔ {agentB.Persona.Name}: 호감도 {relAToB.Liking} ({likingDeltaAToB:+#;-#;0}), 신뢰도 {relAToB.Trust} ({trustDeltaAToB:+#;-#;0})");
             Console.WriteLine($"   * {agentB.Persona.Name} ➔ {agentA.Persona.Name}: 호감도 {relBToA.Liking} ({likingDeltaBToA:+#;-#;0}), 신뢰도 {relBToA.Trust} ({trustDeltaBToA:+#;-#;0})");
 
+            // 관계 변동 실시간 이벤트 브로드캐스트
+            var relEventAToB = new WorldEvent
+            {
+                Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                Relationship = new RelationshipEvent
+                {
+                    FromAgentId = agentA.AgentId,
+                    ToAgentId = agentB.AgentId,
+                    NewAffinity = relAToB.Liking,
+                    AffinityDelta = likingDeltaAToB,
+                    NewTrust = relAToB.Trust,
+                    TrustDelta = trustDeltaAToB
+                }
+            };
+            await _broadcaster.BroadcastAsync(relEventAToB);
+
+            var relEventBToA = new WorldEvent
+            {
+                Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                Relationship = new RelationshipEvent
+                {
+                    FromAgentId = agentB.AgentId,
+                    ToAgentId = agentA.AgentId,
+                    NewAffinity = relBToA.Liking,
+                    AffinityDelta = likingDeltaBToA,
+                    NewTrust = relBToA.Trust,
+                    TrustDelta = trustDeltaBToA
+                }
+            };
+            await _broadcaster.BroadcastAsync(relEventBToA);
+
             // 메모리 이벤트 로깅
             string logMsg = $"대화 발생 ({agentA.Persona.Name} <-> {agentB.Persona.Name}): {summary}\n" +
                             $"   관계 변화:\n" +
@@ -334,6 +372,22 @@ public class DialogueOrchestrator : IDialogueOrchestrator
                     }
 
                     _gossipEngine.ProcessGossipSharing(speaker, listener, originalGossip, content);
+
+                    // 소문 전파 실시간 이벤트 브로드캐스트
+                    bool isMutated = !originalGossip.Content.Trim().Equals(content.Trim(), StringComparison.OrdinalIgnoreCase);
+                    var gossipEvent = new WorldEvent
+                    {
+                        Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                        Gossip = new GossipEvent
+                        {
+                            SpeakerId = speaker.AgentId,
+                            ListenerId = listener.AgentId,
+                            SubjectId = originalGossip.Subject,
+                            GossipContent = content,
+                            IsMutated = isMutated
+                        }
+                    };
+                    await _broadcaster.BroadcastAsync(gossipEvent);
 
                     // 소문 전파를 중기 에피소드 기억으로 귀속
                     string subjectName = (subject == agentA.AgentId) ? agentA.Persona.Name : ((subject == agentB.AgentId) ? agentB.Persona.Name : subject);

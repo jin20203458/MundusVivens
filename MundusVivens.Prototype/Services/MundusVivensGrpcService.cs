@@ -14,15 +14,18 @@ public class MundusVivensGrpcService : MundusVivensGrpc.MundusVivensGrpcBase
     private readonly InteractionScheduler _scheduler;
     private readonly Func<ConcurrentDictionary<string, AgentInstance>> _agentsAccessor;
     private readonly IWorldEventBroadcaster _broadcaster;
+    private readonly IPlayerDialogueManager _playerDialogueManager;
 
     public MundusVivensGrpcService(
         InteractionScheduler scheduler,
         Func<ConcurrentDictionary<string, AgentInstance>> agentsAccessor,
-        IWorldEventBroadcaster broadcaster)
+        IWorldEventBroadcaster broadcaster,
+        IPlayerDialogueManager playerDialogueManager)
     {
         _scheduler = scheduler;
         _agentsAccessor = agentsAccessor;
         _broadcaster = broadcaster;
+        _playerDialogueManager = playerDialogueManager;
     }
 
     public override async Task<TriggerDialogueResponse> TriggerDialogue(TriggerDialogueRequest request, ServerCallContext context)
@@ -221,5 +224,63 @@ public class MundusVivensGrpcService : MundusVivensGrpc.MundusVivensGrpcBase
     public override Task SubscribeWorldEvents(SubscribeRequest request, IServerStreamWriter<WorldEvent> responseStream, ServerCallContext context)
     {
         return _broadcaster.SubscribeAsync(request.SubscriberId, responseStream, context.CancellationToken);
+    }
+
+    public override async Task<StartPlayerDialogueResponse> StartPlayerDialogue(StartPlayerDialogueRequest request, ServerCallContext context)
+    {
+        try
+        {
+            var result = await _playerDialogueManager.StartDialogueAsync(request.PlayerId, request.NpcId, context.CancellationToken);
+            return new StartPlayerDialogueResponse
+            {
+                Success = result.Success,
+                Message = result.Message,
+                SessionId = result.SessionId,
+                Greeting = result.Greeting
+            };
+        }
+        catch (Exception ex)
+        {
+            return new StartPlayerDialogueResponse
+            {
+                Success = false,
+                Message = $"플레이어 대화 시작 오류: {ex.Message}",
+                SessionId = string.Empty,
+                Greeting = string.Empty
+            };
+        }
+    }
+
+    public override async Task<SendPlayerMessageResponse> SendPlayerMessage(SendPlayerMessageRequest request, ServerCallContext context)
+    {
+        try
+        {
+            var reply = await _playerDialogueManager.SendMessageAsync(request.SessionId, request.Message, context.CancellationToken);
+            return new SendPlayerMessageResponse
+            {
+                Reply = reply
+            };
+        }
+        catch (Exception ex)
+        {
+            throw new RpcException(new Status(StatusCode.Internal, $"플레이어 메시지 전송 오류: {ex.Message}"));
+        }
+    }
+
+    public override async Task<EndPlayerDialogueResponse> EndPlayerDialogue(EndPlayerDialogueRequest request, ServerCallContext context)
+    {
+        try
+        {
+            var result = await _playerDialogueManager.EndDialogueAsync(request.SessionId, context.CancellationToken);
+            return new EndPlayerDialogueResponse
+            {
+                Success = result.Success,
+                Summary = result.Summary
+            };
+        }
+        catch (Exception ex)
+        {
+            throw new RpcException(new Status(StatusCode.Internal, $"플레이어 대화 종료 오류: {ex.Message}"));
+        }
     }
 }

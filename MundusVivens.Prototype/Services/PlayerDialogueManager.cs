@@ -1,0 +1,515 @@
+using MundusVivens.Prototype.Models;
+using MundusVivens.Prototype.Helpers;
+using MundusVivens.Prototype.Protos;
+using System;
+using System.Collections.Concurrent;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
+
+namespace MundusVivens.Prototype.Services
+{
+    public interface IPlayerDialogueManager
+    {
+        Task<(bool Success, string Message, string SessionId, string Greeting)> StartDialogueAsync(string playerId, string npcId, CancellationToken cancellationToken = default);
+        Task<string> SendMessageAsync(string sessionId, string messageText, CancellationToken cancellationToken = default);
+        Task<(bool Success, string Summary)> EndDialogueAsync(string sessionId, CancellationToken cancellationToken = default);
+    }
+
+    public class PlayerDialogueManager : IPlayerDialogueManager
+    {
+        private readonly IGeminiApiService _apiService;
+        private readonly IGossipEngine _gossipEngine;
+        private readonly IWorldEventBroadcaster _broadcaster;
+        private readonly MemoryEventLogger _memoryLogger;
+        private readonly Func<ConcurrentDictionary<string, AgentInstance>> _agentsAccessor;
+
+        private readonly ConcurrentDictionary<string, PlayerDialogueSession> _activeSessions = new();
+
+        public PlayerDialogueManager(
+            IGeminiApiService apiService,
+            IGossipEngine gossipEngine,
+            IWorldEventBroadcaster broadcaster,
+            MemoryEventLogger memoryLogger,
+            Func<ConcurrentDictionary<string, AgentInstance>> agentsAccessor)
+        {
+            _apiService = apiService;
+            _gossipEngine = gossipEngine;
+            _broadcaster = broadcaster;
+            _memoryLogger = memoryLogger;
+            _agentsAccessor = agentsAccessor;
+        }
+
+        public async Task<(bool Success, string Message, string SessionId, string Greeting)> StartDialogueAsync(string playerId, string npcId, CancellationToken cancellationToken = default)
+        {
+            var agents = _agentsAccessor();
+            if (!agents.TryGetValue(playerId, out var player) || !agents.TryGetValue(npcId, out var npc))
+            {
+                return (false, "에이전트를 찾을 수 없습니다.", string.Empty, string.Empty);
+            }
+
+            if (npc.Status.IsInConversation)
+            {
+                return (false, $"{npc.Persona.Name}은(는) 현재 다른 대화 중이어서 대화할 수 없습니다.", string.Empty, string.Empty);
+            }
+
+            if (player.Status.IsInConversation)
+            {
+                return (false, "플레이어가 이미 대화 진행 중입니다.", string.Empty, string.Empty);
+            }
+
+            // Lock the agents
+            player.Status.IsInConversation = true;
+            npc.Status.IsInConversation = true;
+            player.Status.Activity = $"{npc.Persona.Name}와(과) 대화 중";
+            npc.Status.Activity = $"플레이어와 대화 중";
+
+            var session = new PlayerDialogueSession(playerId, npcId);
+            _activeSessions[session.SessionId] = session;
+
+            // 1. 대화 시작 이벤트 브로드캐스트
+            var startEvent = new WorldEvent
+            {
+                Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                Dialogue = new DialogueEvent
+                {
+                    TaskId = session.SessionId,
+                    AgentAId = playerId,
+                    AgentBId = npcId,
+                    Location = npc.Status.CurrentLocation,
+                    IsStarted = true
+                }
+            };
+            await _broadcaster.BroadcastAsync(startEvent);
+
+            // 2. Greeting 생성
+            var rel = GetOrCreateRelationship(npc, playerId);
+            var relevantEpisodes = npc.MemoryBox.EpisodicMemories
+                .Where(e => (e.InvolvedAgentIds != null && e.InvolvedAgentIds.Contains(playerId)) || e.TargetName == player.Persona.Name)
+                .Select(e => $"[{e.Timestamp:HH:mm}] {e.Summary}");
+
+            string relevantMemoriesStr = string.Join("\n", relevantEpisodes);
+            if (npc.MemoryBox.CoreMemories.Any())
+            {
+                relevantMemoriesStr += "\n[나의 평생 장기 기억]\n" + string.Join("\n", npc.MemoryBox.CoreMemories.Select(c => $"- {c.Content}"));
+            }
+
+            if (string.IsNullOrWhiteSpace(relevantMemoriesStr))
+            {
+                relevantMemoriesStr = "플레이어에 대한 특별한 과거 기억이 없습니다.";
+            }
+
+            // 소문 공유 확인
+            var gossipToShare = _gossipEngine.SelectGossipToShare(npc, player);
+            string gossipSnippet = "없음 (평범하게 첫 인사를 건네십시오)";
+            if (gossipToShare != null)
+            {
+                gossipSnippet = $"[비밀 소문 폭로 지시] 대상: {gossipToShare.Gossip.Subject}, 소문 내용: \"{gossipToShare.Gossip.Content}\"\n" +
+                    "지시: 첫 인사 대화 중 자연스럽게 플레이어에게 이 소문을 흘리거나 질문해 보십시오. (예: '마침 잘 왔군, 혹시 카일 소식 들었나?') 소문의 대상 인물 실명을 언급하십시오.";
+            }
+
+            string systemPrompt = $@"당신은 가상 세계 시뮬레이션의 NPC [{npc.Persona.Name}]입니다. 주어진 페르소나와 대화 상대에 대한 기억을 바탕으로 첫 대면 인사를 건네십시오.
+ 
+[내 페르소나]
+- 이름/직업: {npc.Persona.Name} / {npc.Persona.Job}
+- 성격/말투: {npc.Persona.ToneStyle}
+- 배경 이야기: {npc.Persona.Backstory}
+- 핵심 가치관: {npc.Persona.CoreValues}
+
+[대화 상대방 정보]
+- 이름/직업: {player.Persona.Name} / {player.Persona.Job}
+- 상대에 대한 나의 태도: 호감도 {rel.Liking}/100, 신뢰도 {rel.Trust}/100
+
+[기억 및 상황 맥락]
+<relevant_memories>
+{relevantMemoriesStr}
+</relevant_memories>
+
+<current_situation>
+- 현재 위치: {npc.Status.CurrentLocation}
+- 나의 감정 상태: {npc.Status.Emotion}
+- 화두가 될 수 있는 소문: {gossipSnippet}
+</current_situation>
+
+[대화 규칙]
+1. AI 메타성 발언(인사말, 상황 설명, 해설)을 절대 하지 마십시오.
+2. 오직 대사("" "")와 캐릭터의 행동 묘사만 출력하십시오.
+3. 주어진 말투와 감정 상태를 철저히 고수하십시오.
+4. 첫 인사 한 줄만 출력하십시오. (최대 2문장 이내)";
+
+            var request = new GeminiRequest(
+                SystemInstruction: new Content("system", new List<Part> { new Part(systemPrompt) }),
+                Contents: new List<Content> { new Content("user", new List<Part> { new Part("인사를 시작하십시오.") }) },
+                GenerationConfig: new GenerationConfig(null, 1000)
+            );
+
+            string greeting = await _apiService.SendMessageAsync(request, ModelTier.Flash35, cancellationToken);
+            greeting = CleanResponse(greeting);
+
+            session.ConversationHistory.Add(new ChatMessage(npcId, greeting));
+
+            return (true, string.Empty, session.SessionId, greeting);
+        }
+
+        public async Task<string> SendMessageAsync(string sessionId, string messageText, CancellationToken cancellationToken = default)
+        {
+            if (!_activeSessions.TryGetValue(sessionId, out var session))
+            {
+                throw new Exception("대화 세션을 찾을 수 없습니다.");
+            }
+
+            session.LastActiveAt = DateTime.UtcNow;
+
+            var agents = _agentsAccessor();
+            var player = agents[session.PlayerId];
+            var npc = agents[session.NpcId];
+
+            // 플레이어 메시지 기록
+            session.ConversationHistory.Add(new ChatMessage(session.PlayerId, messageText));
+
+            // NPC 응답 생성
+            var rel = GetOrCreateRelationship(npc, session.PlayerId);
+            var relevantEpisodes = npc.MemoryBox.EpisodicMemories
+                .Where(e => (e.InvolvedAgentIds != null && e.InvolvedAgentIds.Contains(session.PlayerId)) || e.TargetName == player.Persona.Name)
+                .Select(e => $"[{e.Timestamp:HH:mm}] {e.Summary}");
+
+            string relevantMemoriesStr = string.Join("\n", relevantEpisodes);
+            if (npc.MemoryBox.CoreMemories.Any())
+            {
+                relevantMemoriesStr += "\n[나의 평생 장기 기억]\n" + string.Join("\n", npc.MemoryBox.CoreMemories.Select(c => $"- {c.Content}"));
+            }
+
+            if (string.IsNullOrWhiteSpace(relevantMemoriesStr))
+            {
+                relevantMemoriesStr = "플레이어에 대한 특별한 과거 기억이 없습니다.";
+            }
+
+            // 소문 공유 확인
+            var gossipToShare = _gossipEngine.SelectGossipToShare(npc, player);
+            string gossipSnippet = "없음 (플레이어의 질문에 성실히 대답하십시오)";
+            if (gossipToShare != null)
+            {
+                gossipSnippet = $"[비밀 소문 폭로 지시] 대상: {gossipToShare.Gossip.Subject}, 소문 내용: \"{gossipToShare.Gossip.Content}\"\n" +
+                    "지시: 기회가 된다면 대화 흐름 중 자연스럽게 플레이어에게 이 소문을 흘리십시오. 소문의 대상 인물 실명을 언급하십시오.";
+            }
+
+            string systemPrompt = $@"당신은 가상 세계 시뮬레이션의 NPC [{npc.Persona.Name}]입니다. 주어진 페르소나와 대화 상대에 대한 기억, 그리고 대화 내역을 바탕으로 답변을 완성하십시오.
+ 
+[내 페르소나]
+- 이름/직업: {npc.Persona.Name} / {npc.Persona.Job}
+- 성격/말투: {npc.Persona.ToneStyle}
+- 배경 이야기: {npc.Persona.Backstory}
+- 핵심 가치관: {npc.Persona.CoreValues}
+
+[대화 상대방 정보]
+- 이름/직업: {player.Persona.Name} / {player.Persona.Job}
+- 상대에 대한 나의 태도: 호감도 {rel.Liking}/100, 신뢰도 {rel.Trust}/100
+
+[기억 및 상황 맥락]
+<relevant_memories>
+{relevantMemoriesStr}
+</relevant_memories>
+
+<current_situation>
+- 현재 위치: {npc.Status.CurrentLocation}
+- 나의 감정 상태: {npc.Status.Emotion}
+- 화두가 될 수 있는 소문: {gossipSnippet}
+</current_situation>
+
+[대화 규칙]
+1. AI 메타성 발언(인사말, 상황 설명, 해설)을 절대 하지 마십시오.
+2. 오직 대사("" "")와 캐릭터의 행동 묘사만 출력하십시오.
+3. 주어진 말투와 감정 상태를 철저히 고수하십시오.
+4. 한 번의 호출에 한 줄의 대사만 출력하십시오. (최대 2문장 이내)
+5. 절대로 플레이어의 역할까지 대필하여 출력하지 마십시오.";
+
+            // 대화 이력 빌드
+            var contents = new List<Content>();
+            foreach (var msg in session.ConversationHistory)
+            {
+                string role = msg.Role == npc.AgentId ? "model" : "user";
+                contents.Add(new Content(role, new List<Part> { new Part(msg.Text) }));
+            }
+
+            var request = new GeminiRequest(
+                SystemInstruction: new Content("system", new List<Part> { new Part(systemPrompt) }),
+                Contents: contents,
+                GenerationConfig: new GenerationConfig(null, 1000)
+            );
+
+            string reply = await _apiService.SendMessageAsync(request, ModelTier.Flash35, cancellationToken);
+            reply = CleanResponse(reply);
+
+            session.ConversationHistory.Add(new ChatMessage(npc.AgentId, reply));
+
+            return reply;
+        }
+
+        public async Task<(bool Success, string Summary)> EndDialogueAsync(string sessionId, CancellationToken cancellationToken = default)
+        {
+            if (!_activeSessions.TryRemove(sessionId, out var session))
+            {
+                return (false, "대화 세션을 찾을 수 없습니다.");
+            }
+
+            var agents = _agentsAccessor();
+            var player = agents[session.PlayerId];
+            var npc = agents[session.NpcId];
+
+            string rawHistory = string.Join("\n", session.ConversationHistory.Select(m => {
+                string name = m.Role == player.AgentId ? player.Persona.Name : npc.Persona.Name;
+                return $"{name}: {m.Text}";
+            }));
+
+            // Gemini 사후 분석 요청
+            string postProcessSystemPrompt = $@"당신은 두 NPC 간의 대화 내용을 분석하고 관계 변화 및 전파된 소문을 기록하는 월드 관리인입니다.
+다음 대화를 객관적으로 분석하여 지정된 JSON 구조로만 출력하십시오.
+
+[대화 참여자]
+- 에이전트 A: {player.Persona.Name} (ID: {player.AgentId})
+- 에이전트 B: {npc.Persona.Name} (ID: {npc.AgentId})
+
+[소문 후보 목록]
+{string.Join("\n", npc.KnownGossips.Values.Select(kg => $"- [{kg.Gossip.GossipId}] {kg.Gossip.Subject}에 관한 소문: \"{kg.Gossip.Content}\""))}
+
+[대화 원본]
+<chat_log>
+{rawHistory}
+</chat_log>
+
+[분석 규칙]
+1. summary: 대화 요약을 3인칭 소설 기술처럼 작성하되, 수치(골드, 수치 스탯 등)는 배제하고 1문장으로 요약하십시오.
+2. relationship_changes: 대화 내용을 바탕으로 서로에 대한 호감도(liking)와 신뢰도(trust) 변화량을 -10에서 +10 사이 정수값(delta)으로 산출하십시오. 친화적이면 +, 다툼/불신이 커지면 -입니다.
+3. gossips_exchanged: 대화 중 소문이나 특정 정보가 전파되었는지 분석하십시오.
+   - gossip_id: 위 [소문 후보 목록] 중에서, 대화 중 실제로 전파(발설)된 소문의 '소문 ID'를 찾아 정확히 기입하십시오. 만약 후보 목록에 매칭되는 소문이 없는 새로운 소문일 경우, 임의로 ID를 생성하지 말고 빈 문자열("""")로 두십시오.
+   - subject: 소문의 대상이 된 인물의 AgentId (예: 'npc_kyle' 또는 'npc_bart' 또는 'npc_eva'). 대화에서 해당 대상이 직접 지목된 경우에만 추출하십시오.
+   - content: 대화 중 발설된 소문의 핵심 요약 내용 (예: '성물을 훔쳤다')
+   - credibility_rating: 들려온 이야기에 대해 화자가 보인 신빙성 정도 (0 ~ 100)
+   - speaker_id: 소문을 말한 화자의 AgentId
+
+[출력 포맷]
+{{
+  ""summary"": ""에이전트 A와 B가 안부를 주고받으며 일상 대화를 나눴습니다."",
+  ""relationship_changes"": {{
+    ""liking_delta_a_to_b"": 0,
+    ""trust_delta_a_to_b"": 0,
+    ""liking_delta_b_to_a"": 0,
+    ""trust_delta_b_to_a"": 0
+  }},
+  ""gossips_exchanged"": []
+}}
+";
+
+            var postRequest = new GeminiRequest(
+                SystemInstruction: new Content("system", new List<Part> { new Part(postProcessSystemPrompt) }),
+                Contents: new List<Content> { new Content("user", new List<Part> { new Part("분석 시작.") }) },
+                GenerationConfig: new GenerationConfig(null, 400, "application/json")
+            );
+
+            string postResponse = await _apiService.SendMessageAsync(postRequest, ModelTier.FlashLite, cancellationToken);
+            var analysis = LlmJsonParser.DeserializeSafe<ConversationAnalysis>(postResponse);
+
+            string summary = "대화 분석에 실패했습니다.";
+            if (analysis != null)
+            {
+                summary = analysis.Summary;
+                var timestamp = DateTime.Now;
+
+                // 에피소드 저장
+                player.MemoryBox.AddEpisode(new Episode
+                {
+                    Timestamp = timestamp,
+                    TargetName = npc.Persona.Name,
+                    Summary = summary,
+                    InvolvedAgentIds = new List<string> { player.AgentId, npc.AgentId }
+                });
+                npc.MemoryBox.AddEpisode(new Episode
+                {
+                    Timestamp = timestamp,
+                    TargetName = player.Persona.Name,
+                    Summary = summary,
+                    InvolvedAgentIds = new List<string> { player.AgentId, npc.AgentId }
+                });
+
+                // 관계 갱신 및 이벤트 브로드캐스트
+                var relPlayerToNpc = GetOrCreateRelationship(player, npc.AgentId);
+                var relNpcToPlayer = GetOrCreateRelationship(npc, player.AgentId);
+
+                int likingDeltaAToB = analysis.RelationshipChanges.LikingDeltaAToB;
+                int trustDeltaAToB = analysis.RelationshipChanges.TrustDeltaAToB;
+                int likingDeltaBToA = analysis.RelationshipChanges.LikingDeltaBToA;
+                int trustDeltaBToA = analysis.RelationshipChanges.TrustDeltaBToA;
+
+                relPlayerToNpc.Liking = Math.Clamp(relPlayerToNpc.Liking + likingDeltaAToB, -100, 100);
+                relPlayerToNpc.Trust = Math.Clamp(relPlayerToNpc.Trust + trustDeltaAToB, 0, 100);
+
+                relNpcToPlayer.Liking = Math.Clamp(relNpcToPlayer.Liking + likingDeltaBToA, -100, 100);
+                relNpcToPlayer.Trust = Math.Clamp(relNpcToPlayer.Trust + trustDeltaBToA, 0, 100);
+
+                // 관계 변동 브로드캐스트
+                var relEventAToB = new WorldEvent
+                {
+                    Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                    Relationship = new RelationshipEvent
+                    {
+                        FromAgentId = player.AgentId,
+                        ToAgentId = npc.AgentId,
+                        NewAffinity = relPlayerToNpc.Liking,
+                        AffinityDelta = likingDeltaAToB,
+                        NewTrust = relPlayerToNpc.Trust,
+                        TrustDelta = trustDeltaAToB
+                    }
+                };
+                await _broadcaster.BroadcastAsync(relEventAToB);
+
+                var relEventBToA = new WorldEvent
+                {
+                    Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                    Relationship = new RelationshipEvent
+                    {
+                        FromAgentId = npc.AgentId,
+                        ToAgentId = player.AgentId,
+                        NewAffinity = relNpcToPlayer.Liking,
+                        AffinityDelta = likingDeltaBToA,
+                        NewTrust = relNpcToPlayer.Trust,
+                        TrustDelta = trustDeltaBToA
+                    }
+                };
+                await _broadcaster.BroadcastAsync(relEventBToA);
+
+                // 소문 전파 처리
+                if (analysis.GossipsExchanged != null)
+                {
+                    foreach (var gossipElem in analysis.GossipsExchanged)
+                    {
+                        string subject = gossipElem.Subject;
+                        string content = gossipElem.Content;
+                        string speakerId = gossipElem.SpeakerId;
+
+                        if (string.IsNullOrWhiteSpace(subject) || string.IsNullOrWhiteSpace(content)) continue;
+
+                        AgentInstance speaker = speakerId == player.AgentId ? player : npc;
+                        AgentInstance listener = speakerId == player.AgentId ? npc : player;
+
+                        GossipItem? originalGossip = null;
+
+                        if (!string.IsNullOrWhiteSpace(gossipElem.GossipId))
+                        {
+                            if (speaker.KnownGossips.TryGetValue(gossipElem.GossipId, out var knownGossip))
+                            {
+                                originalGossip = knownGossip.Gossip;
+                            }
+                        }
+
+                        if (originalGossip == null)
+                        {
+                            originalGossip = speaker.KnownGossips.Values.FirstOrDefault(kg => kg.Gossip.Subject == subject)?.Gossip;
+                        }
+
+                        if (originalGossip == null)
+                        {
+                            originalGossip = new GossipItem
+                            {
+                                GossipId = $"gossip_{subject}_{Guid.NewGuid().ToString().Substring(0, 5)}",
+                                Subject = subject,
+                                Content = content,
+                                SourceAgentId = speaker.AgentId,
+                                BaseCredibility = 70
+                            };
+                            speaker.KnownGossips[originalGossip.GossipId] = new KnownGossip
+                            {
+                                Gossip = originalGossip,
+                                SubjectiveBelief = 1.0,
+                                HasSharedWithOthers = true
+                            };
+                        }
+
+                        _gossipEngine.ProcessGossipSharing(speaker, listener, originalGossip, content);
+
+                        // 소문 전파 실시간 이벤트 브로드캐스트
+                        bool isMutated = !originalGossip.Content.Trim().Equals(content.Trim(), StringComparison.OrdinalIgnoreCase);
+                        var gossipEvent = new WorldEvent
+                        {
+                            Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                            Gossip = new GossipEvent
+                            {
+                                SpeakerId = speaker.AgentId,
+                                ListenerId = listener.AgentId,
+                                SubjectId = originalGossip.Subject,
+                                GossipContent = content,
+                                IsMutated = isMutated
+                            }
+                        };
+                        await _broadcaster.BroadcastAsync(gossipEvent);
+
+                        // 에피소드 귀속
+                        string subjectName = (subject == player.AgentId) ? player.Persona.Name : ((subject == npc.AgentId) ? npc.Persona.Name : subject);
+                        listener.MemoryBox.AddEpisode(new Episode
+                        {
+                            Timestamp = DateTime.Now,
+                            TargetName = speaker.Persona.Name,
+                            Summary = $"{speaker.Persona.Name}(으)로부터 {subjectName}에 대한 소문(\"{content}\")을 들었습니다.",
+                            InvolvedAgentIds = new List<string> { speaker.AgentId, listener.AgentId, subject }
+                        });
+                    }
+                }
+
+                // 로그 및 파일 로깅
+                string logMsg = $"대화 발생 ({player.Persona.Name} <-> {npc.Persona.Name}): {summary}\n" +
+                                $"   관계 변화:\n" +
+                                $"     * {player.Persona.Name} ➔ {npc.Persona.Name}: 호감도 {relPlayerToNpc.Liking} ({likingDeltaAToB:+#;-#;0}), 신뢰도 {relPlayerToNpc.Trust} ({trustDeltaAToB:+#;-#;0})\n" +
+                                $"     * {npc.Persona.Name} ➔ {player.Persona.Name}: 호감도 {relNpcToPlayer.Liking} ({likingDeltaBToA:+#;-#;0}), 신뢰도 {relNpcToPlayer.Trust} ({trustDeltaBToA:+#;-#;0})";
+                await _memoryLogger.LogMemoryEventAsync(logMsg);
+            }
+
+            // 대화 종료 이벤트 브로드캐스트
+            var structuredLines = session.ConversationHistory.Select(m => new DialogueLine
+            {
+                SpeakerId = m.Role,
+                SpeakerName = m.Role == player.AgentId ? player.Persona.Name : npc.Persona.Name,
+                Text = m.Text
+            }).ToList();
+
+            var endEvent = new WorldEvent
+            {
+                Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                Dialogue = new DialogueEvent
+                {
+                    TaskId = session.SessionId,
+                    AgentAId = session.PlayerId,
+                    AgentBId = session.NpcId,
+                    Location = npc.Status.CurrentLocation,
+                    IsStarted = false,
+                    Summary = summary
+                }
+            };
+            endEvent.Dialogue.Lines.AddRange(structuredLines);
+            await _broadcaster.BroadcastAsync(endEvent);
+
+            // Release lock
+            player.Status.IsInConversation = false;
+            npc.Status.IsInConversation = false;
+            player.Status.Activity = "마을 둘러보기";
+            npc.Status.Activity = "대기 중";
+
+            return (true, summary);
+        }
+
+        private Relationship GetOrCreateRelationship(AgentInstance agent, string targetId)
+        {
+            if (!agent.RelationshipMap.TryGetValue(targetId, out var rel))
+            {
+                rel = new Relationship { TargetAgentId = targetId, Liking = 0, Trust = 50 };
+                agent.RelationshipMap[targetId] = rel;
+            }
+            return rel;
+        }
+
+        private string CleanResponse(string response)
+        {
+            if (string.IsNullOrWhiteSpace(response)) return string.Empty;
+            return response.Trim().Replace("\"", "");
+        }
+    }
+}
