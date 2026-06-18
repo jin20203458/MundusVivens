@@ -104,6 +104,9 @@ public class RelationshipChanges
 
 public class GossipExchangeInfo
 {
+    [JsonPropertyName("gossip_id")]
+    public string GossipId { get; set; } = string.Empty;
+
     [JsonPropertyName("subject")]
     public string Subject { get; set; } = string.Empty;
 

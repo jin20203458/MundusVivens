@@ -24,7 +24,7 @@ public class Program
     {
         Console.OutputEncoding = Encoding.UTF8;
         Console.WriteLine("=======================================================");
-        Console.WriteLine("🌍 Project Mundus Vivens — Phase 2 Hybrid Server");
+        Console.WriteLine("🌍 Project Mundus Vivens — Phase 3.5 Gossip Improved Server");
         Console.WriteLine("=======================================================\n");
 
         var builder = WebApplication.CreateBuilder(args);

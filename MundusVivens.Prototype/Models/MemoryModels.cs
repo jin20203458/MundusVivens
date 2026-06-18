@@ -22,6 +22,7 @@ public class Episode
     public DateTime Timestamp { get; set; } = DateTime.Now;
     public string TargetName { get; set; } = string.Empty;
     public string Summary { get; set; } = string.Empty;
+    public List<string> InvolvedAgentIds { get; set; } = new();
 }
 
 public class CoreFact

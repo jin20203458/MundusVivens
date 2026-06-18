@@ -63,9 +63,9 @@ public class DialogueOrchestrator : IDialogueOrchestrator
         {
             var rel = GetOrCreateRelationship(currentSpeaker, currentListener.AgentId);
             var relevantEpisodes = currentSpeaker.MemoryBox.EpisodicMemories
-                .Where(e => e.TargetName == currentListener.Persona.Name || 
-                            e.TargetName == currentListener.AgentId || 
-                            e.Summary.Contains(currentListener.Persona.Name))
+                .Where(e => (e.InvolvedAgentIds != null && e.InvolvedAgentIds.Contains(currentListener.AgentId)) ||
+                            e.TargetName == currentListener.Persona.Name || 
+                            e.TargetName == currentListener.AgentId)
                 .Select(e => $"[{e.Timestamp:HH:mm}] {e.Summary}");
             
             string relevantMemoriesStr = string.Join("\n", relevantEpisodes);
@@ -165,6 +165,21 @@ public class DialogueOrchestrator : IDialogueOrchestrator
             return $"{name}: {m.Text}";
         }));
 
+        // 후보 소문 목록 구성 (화자 A와 B가 알고 있는 모든 소문 목록)
+        var candidateGossips = new List<string>();
+        foreach (var kg in agentA.KnownGossips.Values)
+        {
+            candidateGossips.Add($"- 소문 ID: {kg.Gossip.GossipId} (대상 AgentId: {kg.Gossip.Subject}, 소문 내용: \"{kg.Gossip.Content}\")");
+        }
+        foreach (var kg in agentB.KnownGossips.Values)
+        {
+            if (!agentA.KnownGossips.ContainsKey(kg.Gossip.GossipId))
+            {
+                candidateGossips.Add($"- 소문 ID: {kg.Gossip.GossipId} (대상 AgentId: {kg.Gossip.Subject}, 소문 내용: \"{kg.Gossip.Content}\")");
+            }
+        }
+        string candidatesStr = candidateGossips.Any() ? string.Join("\n", candidateGossips) : "알려진 소문 없음";
+
         string postProcessSystemPrompt = $@"당신은 두 NPC 간의 대화 내용을 분석하고 관계 변화 및 전파된 소문을 기록하는 월드 관리 시스템입니다.
 다음 대화를 객관적으로 분석하여 지정된 JSON 구조로만 출력하십시오. 절대 ```json 과 같은 마크다운 코드 블록이나 추가 문장을 붙이지 말고 순수 JSON만 반환하십시오.
 
@@ -177,10 +192,15 @@ public class DialogueOrchestrator : IDialogueOrchestrator
 {chatLog}
 </chat_log>
 
+[소문 후보 목록 (Gossip Candidates)]
+대화 시작 시점 기준 두 에이전트가 보유하고 있던 소문 풀입니다:
+{candidatesStr}
+
 [분석 규칙]
 1. summary: 대화 요약을 3인칭 소설 기술처럼 작성하되, 수치(골드, 수치 스탯 등)는 배제하고 1문장으로 요약하십시오.
 2. relationship_changes: 대화 내용을 바탕으로 서로에 대한 호감도(liking)와 신뢰도(trust) 변화량을 -10에서 +10 사이 정수값(delta)으로 산출하십시오. 친화적이면 +, 다툼/불신이 커지면 -입니다.
 3. gossips_exchanged: 대화 중 소문이나 특정 정보가 전파되었는지 분석하십시오.
+   - gossip_id: 위 [소문 후보 목록] 중에서, 대화 중 실제로 전파(발설)된 소문의 '소문 ID'를 찾아 정확히 기입하십시오. 만약 후보 목록에 매칭되는 소문이 없는 새로운 소문일 경우, 임의로 ID를 생성하지 말고 빈 문자열("""")로 두십시오.
    - subject: 소문의 대상이 된 인물의 AgentId (예: 'npc_kyle' 또는 'npc_bart' 또는 'npc_eva'). 대화에서 해당 대상이 직접 지목된 경우에만 추출하십시오.
    - content: 대화 중 발설된 소문의 핵심 요약 내용 (예: '성물을 훔쳤다')
    - credibility_rating: 들려온 이야기에 대해 화자가 보인 신빙성 정도 (0 ~ 100)
@@ -213,8 +233,20 @@ public class DialogueOrchestrator : IDialogueOrchestrator
             string summary = analysis.Summary;
             var timestamp = DateTime.Now;
 
-            agentA.MemoryBox.AddEpisode(new Episode { Timestamp = timestamp, TargetName = agentB.Persona.Name, Summary = summary });
-            agentB.MemoryBox.AddEpisode(new Episode { Timestamp = timestamp, TargetName = agentA.Persona.Name, Summary = summary });
+            agentA.MemoryBox.AddEpisode(new Episode 
+            { 
+                Timestamp = timestamp, 
+                TargetName = agentB.Persona.Name, 
+                Summary = summary,
+                InvolvedAgentIds = new List<string> { agentA.AgentId, agentB.AgentId }
+            });
+            agentB.MemoryBox.AddEpisode(new Episode 
+            { 
+                Timestamp = timestamp, 
+                TargetName = agentA.Persona.Name, 
+                Summary = summary,
+                InvolvedAgentIds = new List<string> { agentA.AgentId, agentB.AgentId }
+            });
 
             // 관계 업데이트
             int likingDeltaAToB = analysis.RelationshipChanges.LikingDeltaAToB;
@@ -252,16 +284,33 @@ public class DialogueOrchestrator : IDialogueOrchestrator
                     AgentInstance speaker = speakerId == agentA.AgentId ? agentA : agentB;
                     AgentInstance listener = speakerId == agentA.AgentId ? agentB : agentA;
 
-                    // 이번 대화에서 발설 대상으로 지정된 소문이 있고 대상이 일치하면 우선 매치, 없으면 폴백 검색
+                    // 2-tier 하이브리드 폴백 매칭 적용
                     GossipItem? originalGossip = null;
-                    var selectedGossip = speaker.AgentId == agentA.AgentId ? gossipToShareByA : gossipToShareByB;
-                    if (selectedGossip != null && selectedGossip.Gossip.Subject == subject)
+
+                    // Tier 1: LLM이 식별하여 전달한 gossip_id를 기반으로 매칭 시도
+                    if (!string.IsNullOrWhiteSpace(gossipElem.GossipId))
                     {
-                        originalGossip = selectedGossip.Gossip;
+                        if (speaker.KnownGossips.TryGetValue(gossipElem.GossipId, out var knownGossip))
+                        {
+                            originalGossip = knownGossip.Gossip;
+                        }
                     }
-                    else
+
+                    // Tier 2: LLM의 ID 매칭 실패 시, 이번 대화 시작 시 공유하기로 지정되었던 소문과 비교
+                    if (originalGossip == null)
                     {
-                        originalGossip = speaker.KnownGossips.Values.FirstOrDefault(kg => kg.Gossip.Subject == subject)?.Gossip;
+                        var targetGossipToShare = speaker.AgentId == agentA.AgentId ? gossipToShareByA : gossipToShareByB;
+                        if (targetGossipToShare != null && targetGossipToShare.Gossip.Subject == subject)
+                        {
+                            originalGossip = targetGossipToShare.Gossip;
+                        }
+                    }
+
+                    // Tier 3: 여전히 매칭 실패 시, subject 기반의 fallback 검색 (동일인에 대한 소문이 1개뿐이거나 구형 로직 지원용)
+                    if (originalGossip == null)
+                    {
+                        originalGossip = speaker.KnownGossips.Values
+                            .FirstOrDefault(kg => kg.Gossip.Subject == subject)?.Gossip;
                     }
 
                     if (originalGossip == null)
@@ -291,7 +340,8 @@ public class DialogueOrchestrator : IDialogueOrchestrator
                     {
                         Timestamp = DateTime.Now,
                         TargetName = speaker.Persona.Name,
-                        Summary = $"{speaker.Persona.Name}(으)로부터 {subjectName}에 대한 소문(\"{content}\")을 들었습니다."
+                        Summary = $"{speaker.Persona.Name}(으)로부터 {subjectName}에 대한 소문(\"{content}\")을 들었습니다.",
+                        InvolvedAgentIds = new List<string> { speaker.AgentId, listener.AgentId, subject }
                     });
 
                     // 소문 유통 메모리 로깅
