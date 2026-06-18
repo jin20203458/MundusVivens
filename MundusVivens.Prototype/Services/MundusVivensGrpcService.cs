@@ -13,13 +13,16 @@ public class MundusVivensGrpcService : MundusVivensGrpc.MundusVivensGrpcBase
 {
     private readonly InteractionScheduler _scheduler;
     private readonly Func<ConcurrentDictionary<string, AgentInstance>> _agentsAccessor;
+    private readonly IWorldEventBroadcaster _broadcaster;
 
     public MundusVivensGrpcService(
         InteractionScheduler scheduler,
-        Func<ConcurrentDictionary<string, AgentInstance>> agentsAccessor)
+        Func<ConcurrentDictionary<string, AgentInstance>> agentsAccessor,
+        IWorldEventBroadcaster broadcaster)
     {
         _scheduler = scheduler;
         _agentsAccessor = agentsAccessor;
+        _broadcaster = broadcaster;
     }
 
     public override async Task<TriggerDialogueResponse> TriggerDialogue(TriggerDialogueRequest request, ServerCallContext context)
@@ -130,12 +133,30 @@ public class MundusVivensGrpcService : MundusVivensGrpc.MundusVivensGrpcBase
             });
         }
 
+        var oldLocation = agent.Status.CurrentLocation;
+
         // 스레드 세이프하게 상태 갱신
         if (!string.IsNullOrWhiteSpace(request.Location)) agent.Status.CurrentLocation = request.Location;
         if (!string.IsNullOrWhiteSpace(request.Emotion)) agent.Status.Emotion = request.Emotion;
         if (!string.IsNullOrWhiteSpace(request.Activity)) agent.Status.Activity = request.Activity;
 
         Console.WriteLine($"🔄 [gRPC] 에이전트 '{agent.Persona.Name}' 상태 업데이트: 위치={agent.Status.CurrentLocation}, 감정={agent.Status.Emotion}, 행동={agent.Status.Activity}");
+
+        // 위치가 변경되었을 경우 이동 이벤트 브로드캐스트
+        if (!string.IsNullOrWhiteSpace(request.Location) && oldLocation != request.Location)
+        {
+            var moveEvent = new WorldEvent
+            {
+                Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                Movement = new MovementEvent
+                {
+                    AgentId = request.AgentId,
+                    FromLocation = oldLocation,
+                    ToLocation = request.Location
+                }
+            };
+            _ = _broadcaster.BroadcastAsync(moveEvent);
+        }
 
         return Task.FromResult(new UpdateAgentStatusResponse
         {
@@ -147,6 +168,18 @@ public class MundusVivensGrpcService : MundusVivensGrpc.MundusVivensGrpcBase
     public override Task<ProcessWorldTickResponse> ProcessWorldTick(ProcessWorldTickRequest request, ServerCallContext context)
     {
         Console.WriteLine($"⏱️ [gRPC] 월드 틱 진행 통보 수신: 틱 번호 {request.TickNumber}");
+
+        // 틱 이벤트 브로드캐스트
+        var tickEvent = new WorldEvent
+        {
+            Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+            Tick = new TickEvent
+            {
+                TickNumber = request.TickNumber
+            }
+        };
+        _ = _broadcaster.BroadcastAsync(tickEvent);
+
         return Task.FromResult(new ProcessWorldTickResponse
         {
             Success = true,
@@ -183,5 +216,10 @@ public class MundusVivensGrpcService : MundusVivensGrpc.MundusVivensGrpcBase
         }
 
         return Task.FromResult(response);
+    }
+
+    public override Task SubscribeWorldEvents(SubscribeRequest request, IServerStreamWriter<WorldEvent> responseStream, ServerCallContext context)
+    {
+        return _broadcaster.SubscribeAsync(request.SubscriberId, responseStream, context.CancellationToken);
     }
 }

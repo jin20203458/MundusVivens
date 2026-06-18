@@ -44,6 +44,7 @@ public class InteractionScheduler : BackgroundService
     private readonly SemaphoreSlim _globalSemaphore;
     private readonly IDialogueOrchestrator _orchestrator;
     private readonly Func<ConcurrentDictionary<string, AgentInstance>> _agentsAccessor;
+    private readonly IWorldEventBroadcaster _broadcaster;
     private readonly ILogger<InteractionScheduler> _logger;
     private readonly object _lock = new();
     private readonly ConcurrentDictionary<string, (DialogueSchedulerResult Result, DateTime CompletedAt)> _completedResults = new();
@@ -51,11 +52,13 @@ public class InteractionScheduler : BackgroundService
     public InteractionScheduler(
         IDialogueOrchestrator orchestrator,
         Func<ConcurrentDictionary<string, AgentInstance>> agentsAccessor,
+        IWorldEventBroadcaster broadcaster,
         ILogger<InteractionScheduler> logger,
         int maxGlobalConcurrent = 2)
     {
         _orchestrator = orchestrator;
         _agentsAccessor = agentsAccessor;
+        _broadcaster = broadcaster;
         _logger = logger;
         _globalSemaphore = new SemaphoreSlim(maxGlobalConcurrent);
 
@@ -205,6 +208,21 @@ public class InteractionScheduler : BackgroundService
                         {
                             agentB.Status.CurrentLocation = agentA.Status.CurrentLocation;
 
+                            // 1. 대화 시작 이벤트 브로드캐스트
+                            var startEvent = new MundusVivens.Prototype.Protos.WorldEvent
+                            {
+                                Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                                Dialogue = new MundusVivens.Prototype.Protos.DialogueEvent
+                                {
+                                    TaskId = job.JobId,
+                                    AgentAId = job.AgentIdA,
+                                    AgentBId = job.AgentIdB,
+                                    Location = agentA.Status.CurrentLocation,
+                                    IsStarted = true
+                                }
+                            };
+                            await _broadcaster.BroadcastAsync(startEvent);
+
                             var result = await _orchestrator.RunConversationAsync(agentA, agentB);
                             
                             var schedulerResult = new DialogueSchedulerResult
@@ -218,6 +236,26 @@ public class InteractionScheduler : BackgroundService
 
                             _completedResults[job.JobId] = (schedulerResult, DateTime.UtcNow);
                             job.CompletionSource.TrySetResult(schedulerResult);
+
+                            // 2. 대화 완료 이벤트 브로드캐스트
+                            var endEvent = new MundusVivens.Prototype.Protos.WorldEvent
+                            {
+                                Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                                Dialogue = new MundusVivens.Prototype.Protos.DialogueEvent
+                                {
+                                    TaskId = job.JobId,
+                                    AgentAId = job.AgentIdA,
+                                    AgentBId = job.AgentIdB,
+                                    Location = agentA.Status.CurrentLocation,
+                                    IsStarted = false,
+                                    Summary = result.Summary
+                                }
+                            };
+                            foreach (var line in result.StructuredLines)
+                            {
+                                endEvent.Dialogue.Lines.Add(line);
+                            }
+                            await _broadcaster.BroadcastAsync(endEvent);
                         }
                         catch (Exception ex)
                         {

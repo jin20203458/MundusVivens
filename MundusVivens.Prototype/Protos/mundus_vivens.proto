@@ -13,6 +13,9 @@ service MundusVivensGrpc {
 
   // 🆕 비동기 대화 결과 조회 (Phase 4-A 신규)
   rpc GetDialogueResult (GetDialogueResultRequest) returns (GetDialogueResultResponse);
+
+  // 🆕 관찰자 모드: 실시간 이벤트 스트림 구독 (Phase 4-B 신규)
+  rpc SubscribeWorldEvents (SubscribeRequest) returns (stream WorldEvent);
 }
 
 message TriggerDialogueRequest {
@@ -89,4 +92,56 @@ message GetDialogueResultResponse {
   bool is_completed = 2;        // 아직 진행 중이면 false
   string dialogue_summary = 3;
   repeated DialogueLine lines = 4;  // 구조화된 대사
+}
+
+message SubscribeRequest {
+  string subscriber_id = 1;
+}
+
+message WorldEvent {
+  int64 timestamp = 1;
+  oneof event {
+    DialogueEvent dialogue = 2;       // 대화 시작/진행/종료
+    MovementEvent movement = 3;       // NPC 이동
+    GossipEvent gossip = 4;           // 소문 전파 발생
+    RelationshipEvent relationship = 5; // 관계도 변화
+    TickEvent tick = 6;               // 틱 진행
+  }
+}
+
+message DialogueEvent {
+  string task_id = 1;
+  string agent_a_id = 2;
+  string agent_b_id = 3;
+  string location = 4;
+  repeated DialogueLine lines = 5;    // 대화 완료 시 채워짐
+  string summary = 6;
+  bool is_started = 7;               // true=시작, false=완료
+}
+
+message MovementEvent {
+  string agent_id = 1;
+  string from_location = 2;
+  string to_location = 3;
+}
+
+message GossipEvent {
+  string speaker_id = 1;
+  string listener_id = 2;
+  string subject_id = 3;
+  string gossip_content = 4;
+  bool is_mutated = 5;               // 와전 여부
+}
+
+message RelationshipEvent {
+  string from_agent_id = 1;
+  string to_agent_id = 2;
+  int32 new_affinity = 3;
+  int32 affinity_delta = 4;
+  int32 new_trust = 5;
+  int32 trust_delta = 6;
+}
+
+message TickEvent {
+  int32 tick_number = 1;
 }

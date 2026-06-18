@@ -50,6 +50,7 @@ public class Program
         builder.Services.AddSingleton<IGeminiApiService, GeminiApiService>();
         builder.Services.AddSingleton<IGossipEngine, GossipEngine>();
         builder.Services.AddSingleton<IDialogueOrchestrator, DialogueOrchestrator>();
+        builder.Services.AddSingleton<IWorldEventBroadcaster, WorldEventBroadcaster>();
 
         // 에이전트 인메모리 저장소
         var initialAgents = InitializeAgents();
@@ -62,8 +63,9 @@ public class Program
         {
             var orchestrator = sp.GetRequiredService<IDialogueOrchestrator>();
             var accessor = sp.GetRequiredService<Func<ConcurrentDictionary<string, AgentInstance>>>();
+            var broadcaster = sp.GetRequiredService<IWorldEventBroadcaster>();
             var logger = sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<InteractionScheduler>>();
-            return new InteractionScheduler(orchestrator, accessor, logger, maxGlobalConcurrent);
+            return new InteractionScheduler(orchestrator, accessor, broadcaster, logger, maxGlobalConcurrent);
         });
         builder.Services.AddHostedService(sp => sp.GetRequiredService<InteractionScheduler>());
 
