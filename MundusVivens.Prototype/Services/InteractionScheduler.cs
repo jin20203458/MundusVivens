@@ -34,6 +34,7 @@ public class DialogueSchedulerResult
     public string ErrorMessage { get; set; } = string.Empty;
     public string Summary { get; set; } = string.Empty;
     public List<string> DialogueLines { get; set; } = new();
+    public List<MundusVivens.Prototype.Protos.DialogueLine> StructuredLines { get; set; } = new();
 }
 
 public class InteractionScheduler : BackgroundService
@@ -45,6 +46,7 @@ public class InteractionScheduler : BackgroundService
     private readonly Func<ConcurrentDictionary<string, AgentInstance>> _agentsAccessor;
     private readonly ILogger<InteractionScheduler> _logger;
     private readonly object _lock = new();
+    private readonly ConcurrentDictionary<string, (DialogueSchedulerResult Result, DateTime CompletedAt)> _completedResults = new();
 
     public InteractionScheduler(
         IDialogueOrchestrator orchestrator,
@@ -150,10 +152,18 @@ public class InteractionScheduler : BackgroundService
             }
         }, stoppingToken);
 
+        int cleanupCounter = 0;
         while (!stoppingToken.IsCancellationRequested)
         {
             await Task.Delay(1000, stoppingToken);
             TriggerScheduling();
+
+            cleanupCounter++;
+            if (cleanupCounter >= 30) // 30 seconds interval
+            {
+                cleanupCounter = 0;
+                CleanupExpiredResults();
+            }
         }
 
         await readerTask;
@@ -197,23 +207,30 @@ public class InteractionScheduler : BackgroundService
 
                             var result = await _orchestrator.RunConversationAsync(agentA, agentB);
                             
-                            job.CompletionSource.TrySetResult(new DialogueSchedulerResult
+                            var schedulerResult = new DialogueSchedulerResult
                             {
                                 JobId = job.JobId,
                                 Success = true,
                                 Summary = result.Summary,
-                                DialogueLines = result.DialogueLines
-                            });
+                                DialogueLines = result.DialogueLines,
+                                StructuredLines = result.StructuredLines
+                            };
+
+                            _completedResults[job.JobId] = (schedulerResult, DateTime.UtcNow);
+                            job.CompletionSource.TrySetResult(schedulerResult);
                         }
                         catch (Exception ex)
                         {
                             _logger.LogError(ex, $"[Scheduler] Job {job.JobId} 실행 중 예외 발생");
-                            job.CompletionSource.TrySetResult(new DialogueSchedulerResult
+                            var errorResult = new DialogueSchedulerResult
                             {
                                 JobId = job.JobId,
                                 Success = false,
                                 ErrorMessage = $"대화 실행 중 오류 발생: {ex.Message}"
-                            });
+                            };
+
+                            _completedResults[job.JobId] = (errorResult, DateTime.UtcNow);
+                            job.CompletionSource.TrySetResult(errorResult);
                         }
                         finally
                         {
@@ -234,6 +251,32 @@ public class InteractionScheduler : BackgroundService
                     _logger.LogWarning($"[Scheduler] 글로벌 실행 한도 초과로 작업을 연기합니다. 대기 중인 작업 개수: {_pendingJobs.Count}");
                     break;
                 }
+            }
+        }
+    }
+
+    public bool TryGetCompletedResult(string jobId, out DialogueSchedulerResult? result)
+    {
+        if (_completedResults.TryGetValue(jobId, out var cached))
+        {
+            result = cached.Result;
+            return true;
+        }
+        result = null;
+        return false;
+    }
+
+    private void CleanupExpiredResults()
+    {
+        var now = DateTime.UtcNow;
+        var expirationTime = TimeSpan.FromMinutes(5);
+
+        foreach (var kvp in _completedResults)
+        {
+            if (now - kvp.Value.CompletedAt > expirationTime)
+            {
+                _completedResults.TryRemove(kvp.Key, out _);
+                _logger.LogInformation($"[Scheduler] Expired dialogue result removed from cache: {kvp.Key}");
             }
         }
     }

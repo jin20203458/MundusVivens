@@ -46,6 +46,11 @@ public class MundusVivensGrpcService : MundusVivensGrpc.MundusVivensGrpcBase
                 response.DialogueLines.AddRange(result.DialogueLines);
             }
 
+            if (result.StructuredLines != null)
+            {
+                response.StructuredLines.AddRange(result.StructuredLines);
+            }
+
             return response;
         }
         catch (Exception ex)
@@ -147,5 +152,36 @@ public class MundusVivensGrpcService : MundusVivensGrpc.MundusVivensGrpcBase
             Success = true,
             Message = $"틱 {request.TickNumber} 처리가 정상적으로 완료되었습니다."
         });
+    }
+
+    public override Task<GetDialogueResultResponse> GetDialogueResult(GetDialogueResultRequest request, ServerCallContext context)
+    {
+        var response = new GetDialogueResultResponse
+        {
+            TaskId = request.TaskId
+        };
+
+        if (_scheduler.TryGetCompletedResult(request.TaskId, out var result) && result != null)
+        {
+            response.IsCompleted = true;
+            if (result.Success)
+            {
+                response.DialogueSummary = result.Summary;
+                if (result.StructuredLines != null)
+                {
+                    response.Lines.AddRange(result.StructuredLines);
+                }
+            }
+            else
+            {
+                response.DialogueSummary = $"[Error] {result.ErrorMessage}";
+            }
+        }
+        else
+        {
+            response.IsCompleted = false;
+        }
+
+        return Task.FromResult(response);
     }
 }

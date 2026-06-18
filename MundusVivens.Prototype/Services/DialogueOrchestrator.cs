@@ -14,6 +14,7 @@ public class DialogueResult
 {
     public string Summary { get; set; } = string.Empty;
     public List<string> DialogueLines { get; set; } = new();
+    public List<MundusVivens.Prototype.Protos.DialogueLine> StructuredLines { get; set; } = new();
 }
 
 public interface IDialogueOrchestrator
@@ -357,8 +358,18 @@ public class DialogueOrchestrator : IDialogueOrchestrator
                 return $"{name}: {m.Text}";
             }).ToList();
 
+            var structuredLines = conversationHistory.Select(m => {
+                string name = m.Role == agentA.AgentId ? agentA.Persona.Name : agentB.Persona.Name;
+                return new MundusVivens.Prototype.Protos.DialogueLine
+                {
+                    SpeakerId = m.Role,
+                    SpeakerName = name,
+                    Text = m.Text
+                };
+            }).ToList();
+
             Console.WriteLine($"=======================================================\n");
-            return new DialogueResult { Summary = summary, DialogueLines = lines };
+            return new DialogueResult { Summary = summary, DialogueLines = lines, StructuredLines = structuredLines };
         }
         else
         {
@@ -366,13 +377,25 @@ public class DialogueOrchestrator : IDialogueOrchestrator
             Console.WriteLine($"Raw Response: {postResponse}");
         }
         Console.WriteLine($"=======================================================\n");
+
+        var fallbackStructuredLines = conversationHistory.Select(m => {
+            string name = m.Role == agentA.AgentId ? agentA.Persona.Name : agentB.Persona.Name;
+            return new MundusVivens.Prototype.Protos.DialogueLine
+            {
+                SpeakerId = m.Role,
+                SpeakerName = name,
+                Text = m.Text
+            };
+        }).ToList();
+
         return new DialogueResult
         {
             Summary = "대화 분석에 실패했습니다.",
             DialogueLines = conversationHistory.Select(m => {
                 string name = m.Role == agentA.AgentId ? agentA.Persona.Name : agentB.Persona.Name;
                 return $"{name}: {m.Text}";
-            }).ToList()
+            }).ToList(),
+            StructuredLines = fallbackStructuredLines
         };
     }
 

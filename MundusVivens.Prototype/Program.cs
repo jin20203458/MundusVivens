@@ -200,15 +200,41 @@ public class Program
                     result.JobId,
                     Status = "Completed",
                     result.Summary,
-                    result.DialogueLines
+                    result.DialogueLines,
+                    result.StructuredLines
                 });
             }
 
-            return Results.Accepted($"/api/interaction/active", new
+            return Results.Accepted($"/api/interaction/result/{result.JobId}", new
             {
                 TaskId = result.JobId,
                 Status = "Queued",
                 Message = result.Summary
+            });
+        });
+
+        // 완료된 대화 결과 조회 (REST API 방식)
+        app.MapGet("/api/interaction/result/{jobId}", (string jobId, InteractionScheduler scheduler) =>
+        {
+            if (scheduler.TryGetCompletedResult(jobId, out var result) && result != null)
+            {
+                return Results.Ok(new
+                {
+                    result.JobId,
+                    Status = result.Success ? "Completed" : "Failed",
+                    result.Success,
+                    result.ErrorMessage,
+                    result.Summary,
+                    result.DialogueLines,
+                    result.StructuredLines
+                });
+            }
+
+            return Results.Ok(new
+            {
+                JobId = jobId,
+                Status = "Processing",
+                Message = "대화가 아직 진행 중이거나 큐에서 대기 중입니다."
             });
         });
 

@@ -10,6 +10,9 @@ service MundusVivensGrpc {
   rpc InjectGossip (InjectGossipRequest) returns (InjectGossipResponse);
   rpc UpdateAgentStatus (UpdateAgentStatusRequest) returns (UpdateAgentStatusResponse);
   rpc ProcessWorldTick (ProcessWorldTickRequest) returns (ProcessWorldTickResponse);
+
+  // 🆕 비동기 대화 결과 조회 (Phase 4-A 신규)
+  rpc GetDialogueResult (GetDialogueResultRequest) returns (GetDialogueResultResponse);
 }
 
 message TriggerDialogueRequest {
@@ -24,6 +27,7 @@ message TriggerDialogueResponse {
   bool completed_immediately = 3;
   string dialogue_summary = 4;
   repeated string dialogue_lines = 5;
+  repeated DialogueLine structured_lines = 6; // 🆕 구조화된 대사 데이터 (하위호환 유지하며 추가)
 }
 
 message GetAgentStatusRequest {
@@ -68,4 +72,21 @@ message ProcessWorldTickRequest {
 message ProcessWorldTickResponse {
   bool success = 1;
   string message = 2;
+}
+
+message DialogueLine {
+  string speaker_id = 1;     // 화자 에이전트 ID (예: "npc_eva")
+  string speaker_name = 2;   // 화자 표시 이름 (예: "에바")
+  string text = 3;           // 대사 내용
+}
+
+message GetDialogueResultRequest {
+  string task_id = 1;
+}
+
+message GetDialogueResultResponse {
+  string task_id = 1;
+  bool is_completed = 2;        // 아직 진행 중이면 false
+  string dialogue_summary = 3;
+  repeated DialogueLine lines = 4;  // 구조화된 대사
 }
