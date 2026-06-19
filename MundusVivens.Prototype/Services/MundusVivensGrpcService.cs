@@ -283,4 +283,41 @@ public class MundusVivensGrpcService : MundusVivensGrpc.MundusVivensGrpcBase
             throw new RpcException(new Status(StatusCode.Internal, $"플레이어 대화 종료 오류: {ex.Message}"));
         }
     }
+
+    public override Task<GetWorldBootstrapResponse> GetWorldBootstrap(GetWorldBootstrapRequest request, ServerCallContext context)
+    {
+        Console.WriteLine("📥 [gRPC] 월드 부트스트랩 데이터 요청 수신");
+
+        var response = new GetWorldBootstrapResponse();
+        var agents = _agentsAccessor();
+
+        foreach (var kv in agents)
+        {
+            response.Agents.Add(new InitialAgentState
+            {
+                AgentId = kv.Value.AgentId,
+                Name = kv.Value.Persona.Name,
+                Location = kv.Value.Status.CurrentLocation,
+                Emotion = kv.Value.Status.Emotion,
+                Activity = kv.Value.Status.Activity
+            });
+        }
+
+        // 인메모리 에이전트의 현재 고유 위치들을 추출하여 반환
+        var locations = agents.Values.Select(a => a.Status.CurrentLocation)
+                                     .Where(l => !string.IsNullOrEmpty(l) && l != "Unknown")
+                                     .Distinct()
+                                     .ToList();
+
+        if (locations.Count == 0)
+        {
+            locations.Add("성당 (Church)");
+            locations.Add("술집 (Tavern)");
+            locations.Add("광장 (Square)");
+        }
+
+        response.Locations.AddRange(locations);
+
+        return Task.FromResult(response);
+    }
 }
