@@ -85,6 +85,18 @@ public class ConversationAnalysis
 
     [JsonPropertyName("gossips_exchanged")]
     public List<GossipExchangeInfo> GossipsExchanged { get; set; } = new();
+
+    [JsonPropertyName("emotion_updates")]
+    public List<EmotionUpdateInfo> EmotionUpdates { get; set; } = new();
+}
+
+public class EmotionUpdateInfo
+{
+    [JsonPropertyName("agent_id")]
+    public string AgentId { get; set; } = string.Empty;
+
+    [JsonPropertyName("new_emotion")]
+    public string NewEmotion { get; set; } = string.Empty;
 }
 
 public class RelationshipChanges

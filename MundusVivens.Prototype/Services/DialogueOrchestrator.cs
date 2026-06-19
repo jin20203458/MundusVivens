@@ -16,6 +16,7 @@ public class DialogueResult
     public string Summary { get; set; } = string.Empty;
     public List<string> DialogueLines { get; set; } = new();
     public List<DialogueLine> StructuredLines { get; set; } = new();
+    public List<AgentEmotionUpdate> EmotionUpdates { get; set; } = new(); // 🆕 감정 업데이트 목록 추가
 }
 
 public interface IDialogueOrchestrator
@@ -212,7 +213,7 @@ public class DialogueOrchestrator : IDialogueOrchestrator
         }
         string candidatesStr = candidateGossips.Any() ? string.Join("\n", candidateGossips) : "알려진 소문 없음";
 
-        string postProcessSystemPrompt = $@"당신은 두 NPC 간의 대화 내용을 분석하고 관계 변화 및 전파된 소문을 기록하는 월드 관리 시스템입니다.
+        string postProcessSystemPrompt = $@"당신은 두 NPC 간의 대화 내용을 분석하고 관계 변화, 전파된 소문 및 대화 후 감정 변화를 기록하는 월드 관리 시스템입니다.
 다음 대화를 객관적으로 분석하여 지정된 JSON 구조로만 출력하십시오. 절대 ```json 과 같은 마크다운 코드 블록이나 추가 문장을 붙이지 말고 순수 JSON만 반환하십시오.
 
 [대화 참여자]
@@ -237,6 +238,9 @@ public class DialogueOrchestrator : IDialogueOrchestrator
    - content: 대화 중 발설된 소문의 핵심 요약 내용 (예: '성물을 훔쳤다')
    - credibility_rating: 들려온 이야기에 대해 화자가 보인 신빙성 정도 (0 ~ 100)
    - speaker_id: 소문을 말한 화자의 AgentId
+4. emotion_updates: 대화 후 각 에이전트가 느낀 새로운 감정 상태(단어 하나, 예: '평온함', '유쾌함', '분노', '슬픔', '당황함', '어색함', '의심' 등)를 분석하여 기록하십시오.
+   - agent_id: 감정이 변한 에이전트의 ID
+   - new_emotion: 대화 내용을 반영한 최종 감정 상태 단어 하나
 
 [출력 포맷]
 {{
@@ -247,7 +251,11 @@ public class DialogueOrchestrator : IDialogueOrchestrator
     ""liking_delta_b_to_a"": 0,
     ""trust_delta_b_to_a"": 0
   }},
-  ""gossips_exchanged"": []
+  ""gossips_exchanged"": [],
+  ""emotion_updates"": [
+    {{ ""agent_id"": ""{agentA.AgentId}"", ""new_emotion"": ""평온함"" }},
+    {{ ""agent_id"": ""{agentB.AgentId}"", ""new_emotion"": ""유쾌함"" }}
+  ]
 }}
 ";
 
@@ -260,8 +268,36 @@ public class DialogueOrchestrator : IDialogueOrchestrator
         string postResponse = await _apiService.SendMessageAsync(postRequest, ModelTier.FlashLite, cancellationToken);
         var analysis = LlmJsonParser.DeserializeSafe<ConversationAnalysis>(postResponse);
 
+        var emotionUpdatesList = new List<AgentEmotionUpdate>();
+
         if (analysis != null)
         {
+            // 감정 업데이트 파싱 및 C# 서버측 상태 동기화
+            if (analysis.EmotionUpdates != null)
+            {
+                foreach (var emUpdate in analysis.EmotionUpdates)
+                {
+                    if (string.IsNullOrWhiteSpace(emUpdate.AgentId) || string.IsNullOrWhiteSpace(emUpdate.NewEmotion)) continue;
+
+                    emotionUpdatesList.Add(new AgentEmotionUpdate
+                    {
+                        AgentId = emUpdate.AgentId,
+                        NewEmotion = emUpdate.NewEmotion
+                    });
+
+                    if (emUpdate.AgentId == agentA.AgentId)
+                    {
+                        agentA.Status.Emotion = emUpdate.NewEmotion;
+                        Console.WriteLine($"🎭 감정 업데이트: {agentA.Persona.Name} ➔ {emUpdate.NewEmotion}");
+                    }
+                    else if (emUpdate.AgentId == agentB.AgentId)
+                    {
+                        agentB.Status.Emotion = emUpdate.NewEmotion;
+                        Console.WriteLine($"🎭 감정 업데이트: {agentB.Persona.Name} ➔ {emUpdate.NewEmotion}");
+                    }
+                }
+            }
+
             string summary = analysis.Summary;
             var timestamp = DateTime.Now;
 
@@ -446,35 +482,42 @@ public class DialogueOrchestrator : IDialogueOrchestrator
                 };
             }).ToList();
 
-            Console.WriteLine($"=======================================================\n");
-            return new DialogueResult { Summary = summary, DialogueLines = lines, StructuredLines = structuredLines };
-        }
-        else
-        {
-            Console.WriteLine($"[Error] 사후 데이터 분석 파싱 실패 (LlmJsonParser 반환값이 null입니다).");
-            Console.WriteLine($"Raw Response: {postResponse}");
-        }
-        Console.WriteLine($"=======================================================\n");
-
-        var fallbackStructuredLines = conversationHistory.Select(m => {
-            string name = m.Role == agentA.AgentId ? agentA.Persona.Name : agentB.Persona.Name;
-            return new MundusVivens.Prototype.Protos.DialogueLine
-            {
-                SpeakerId = m.Role,
-                SpeakerName = name,
-                Text = m.Text
-            };
-        }).ToList();
-
-        return new DialogueResult
-        {
-            Summary = "대화 분석에 실패했습니다.",
-            DialogueLines = conversationHistory.Select(m => {
-                string name = m.Role == agentA.AgentId ? agentA.Persona.Name : agentB.Persona.Name;
-                return $"{name}: {m.Text}";
-            }).ToList(),
-            StructuredLines = fallbackStructuredLines
-        };
+             Console.WriteLine($"=======================================================\n");
+             return new DialogueResult 
+             { 
+                 Summary = summary, 
+                 DialogueLines = lines, 
+                 StructuredLines = structuredLines,
+                 EmotionUpdates = emotionUpdatesList
+             };
+         }
+         else
+         {
+             Console.WriteLine($"[Error] 사후 데이터 분석 파싱 실패 (LlmJsonParser 반환값이 null입니다).");
+             Console.WriteLine($"Raw Response: {postResponse}");
+         }
+         Console.WriteLine($"=======================================================\n");
+ 
+         var fallbackStructuredLines = conversationHistory.Select(m => {
+             string name = m.Role == agentA.AgentId ? agentA.Persona.Name : agentB.Persona.Name;
+             return new MundusVivens.Prototype.Protos.DialogueLine
+             {
+                 SpeakerId = m.Role,
+                 SpeakerName = name,
+                 Text = m.Text
+             };
+         }).ToList();
+ 
+         return new DialogueResult
+         {
+             Summary = "대화 분석에 실패했습니다.",
+             DialogueLines = conversationHistory.Select(m => {
+                 string name = m.Role == agentA.AgentId ? agentA.Persona.Name : agentB.Persona.Name;
+                 return $"{name}: {m.Text}";
+             }).ToList(),
+             StructuredLines = fallbackStructuredLines,
+             EmotionUpdates = emotionUpdatesList
+         };
     }
 
     private Relationship GetOrCreateRelationship(AgentInstance agent, string targetId)

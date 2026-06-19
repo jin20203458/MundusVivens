@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using MundusVivens.Prototype.Models;
+using MundusVivens.Prototype.Protos;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
@@ -34,7 +35,8 @@ public class DialogueSchedulerResult
     public string ErrorMessage { get; set; } = string.Empty;
     public string Summary { get; set; } = string.Empty;
     public List<string> DialogueLines { get; set; } = new();
-    public List<MundusVivens.Prototype.Protos.DialogueLine> StructuredLines { get; set; } = new();
+    public List<DialogueLine> StructuredLines { get; set; } = new();
+    public List<AgentEmotionUpdate> EmotionUpdates { get; set; } = new(); // 🆕 감정 업데이트 추가
 }
 
 public class InteractionScheduler : BackgroundService
@@ -231,7 +233,8 @@ public class InteractionScheduler : BackgroundService
                                 Success = true,
                                 Summary = result.Summary,
                                 DialogueLines = result.DialogueLines,
-                                StructuredLines = result.StructuredLines
+                                StructuredLines = result.StructuredLines,
+                                EmotionUpdates = result.EmotionUpdates
                             };
 
                             _completedResults[job.JobId] = (schedulerResult, DateTime.UtcNow);

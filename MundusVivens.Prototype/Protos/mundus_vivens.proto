@@ -22,6 +22,9 @@ service MundusVivensGrpc {
   rpc SendPlayerMessage (SendPlayerMessageRequest) returns (SendPlayerMessageResponse);
   rpc EndPlayerDialogue (EndPlayerDialogueRequest) returns (EndPlayerDialogueResponse);
   rpc GetWorldBootstrap (GetWorldBootstrapRequest) returns (GetWorldBootstrapResponse);
+
+  // 🆕 일일 스케줄 조회 RPC (Phase 5-1 신규)
+  rpc GetDailySchedules (GetDailySchedulesRequest) returns (GetDailySchedulesResponse);
 }
 
 message TriggerDialogueRequest {
@@ -37,6 +40,7 @@ message TriggerDialogueResponse {
   string dialogue_summary = 4;
   repeated string dialogue_lines = 5;
   repeated DialogueLine structured_lines = 6; // 🆕 구조화된 대사 데이터 (하위호환 유지하며 추가)
+  repeated AgentEmotionUpdate emotion_updates = 7; // 🆕 대화에 따른 감정 업데이트
 }
 
 message GetAgentStatusRequest {
@@ -98,6 +102,7 @@ message GetDialogueResultResponse {
   bool is_completed = 2;        // 아직 진행 중이면 false
   string dialogue_summary = 3;
   repeated DialogueLine lines = 4;  // 구조화된 대사
+  repeated AgentEmotionUpdate emotion_updates = 5; // 🆕 대화에 따른 감정 업데이트
 }
 
 message SubscribeRequest {
@@ -204,3 +209,32 @@ message GetWorldBootstrapResponse {
   repeated string locations = 1;
   repeated InitialAgentState agents = 2;
 }
+
+// 🆕 에이전트 감정 업데이트 정보
+message AgentEmotionUpdate {
+  string agent_id = 1;
+  string new_emotion = 2;
+}
+
+// 🆕 일일 스케줄 항목
+message DailyScheduleItem {
+  int32 start_hour = 1;      // 시작 시간 (0~23)
+  int32 end_hour = 2;        // 종료 시간 (0~23)
+  string target_location = 3;  // 이동할 장소
+  string activity = 4;       // 해당 장소에서 할 구체적인 행동
+}
+
+// 🆕 에이전트별 일일 스케줄
+message DailySchedule {
+  string agent_id = 1;
+  repeated DailyScheduleItem items = 2;
+}
+
+message GetDailySchedulesRequest {
+  int32 current_tick = 1;
+}
+
+message GetDailySchedulesResponse {
+  repeated DailySchedule schedules = 1;
+}
+

@@ -53,6 +53,7 @@ public class Program
         builder.Services.AddSingleton<IDialogueOrchestrator, DialogueOrchestrator>();
         builder.Services.AddSingleton<IPlayerDialogueManager, PlayerDialogueManager>();
         builder.Services.AddSingleton<IWorldEventBroadcaster, WorldEventBroadcaster>();
+        builder.Services.AddSingleton<IDailyPlanService, DailyPlanService>();
 
         // 에이전트 인메모리 저장소
         var initialAgents = InitializeAgents();
@@ -91,6 +92,9 @@ public class Program
 
         // 3. gRPC 라우팅 매핑
         app.MapGrpcService<MundusVivensGrpcService>();
+
+        // 초기 기본 스케줄 채우기
+        app.Services.GetRequiredService<IDailyPlanService>().InitializeDefaultSchedules();
 
         // 4. Minimal APIs (REST API) 라우팅 매핑
         
@@ -437,7 +441,8 @@ public class Program
                 ToneStyle = "정중하고 신중하며 부드러운 경어체를 구사함",
                 Backstory = "어린 시절부터 성당에서 교육받아 깊은 신앙심을 가진 젊은 부사제입니다. 하지만 성당 내부의 야망을 숨기고 있습니다.",
                 CoreValues = "교회의 권위, 평화, 기도",
-                Extroversion = 0.4
+                Extroversion = 0.4,
+                Faction = "성당 세력"
             },
             Status = new AgentStatus
             {
@@ -460,7 +465,8 @@ public class Program
                 ToneStyle = "쾌활하고 친근하며 반말과 친근한 경어를 혼용하여 수다스러움",
                 Backstory = "성당 옆 술집을 수년째 구동하고 있는 여성으로, 마을의 모든 소문이 그녀의 귀를 거쳐 갑니다. 이야기하는 것을 인생의 기쁨으로 여깁니다.",
                 CoreValues = "유쾌한 소통, 마을 사람들과의 친화",
-                Extroversion = 0.9
+                Extroversion = 0.9,
+                Faction = "마을 주민"
             },
             Status = new AgentStatus
             {
@@ -482,7 +488,8 @@ public class Program
                 ToneStyle = "거칠고 퉁명스러우며 직설적이고 반말 위주의 말투",
                 Backstory = "왕년의 전장을 누비던 은퇴한 늙은 전사입니다. 교회의 위선을 혐오하며, 종교인들을 믿지 않습니다.",
                 CoreValues = "명예, 자유, 의심",
-                Extroversion = 0.5
+                Extroversion = 0.5,
+                Faction = "자유 용병"
             },
             Status = new AgentStatus
             {
@@ -505,7 +512,8 @@ public class Program
                 ToneStyle = "자유로운 말투",
                 Backstory = "가상 세계를 탐험하며 주민들의 비밀을 파헤치는 이방인입니다.",
                 CoreValues = "호기심, 진실 규명",
-                Extroversion = 0.5
+                Extroversion = 0.5,
+                Faction = "여행자"
             },
             Status = new AgentStatus
             {

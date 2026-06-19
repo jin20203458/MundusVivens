@@ -15,17 +15,20 @@ public class MundusVivensGrpcService : MundusVivensGrpc.MundusVivensGrpcBase
     private readonly Func<ConcurrentDictionary<string, AgentInstance>> _agentsAccessor;
     private readonly IWorldEventBroadcaster _broadcaster;
     private readonly IPlayerDialogueManager _playerDialogueManager;
+    private readonly IDailyPlanService _dailyPlanService; // 🆕 일일 스케줄 및 성찰 서비스 추가
 
     public MundusVivensGrpcService(
         InteractionScheduler scheduler,
         Func<ConcurrentDictionary<string, AgentInstance>> agentsAccessor,
         IWorldEventBroadcaster broadcaster,
-        IPlayerDialogueManager playerDialogueManager)
+        IPlayerDialogueManager playerDialogueManager,
+        IDailyPlanService dailyPlanService)
     {
         _scheduler = scheduler;
         _agentsAccessor = agentsAccessor;
         _broadcaster = broadcaster;
         _playerDialogueManager = playerDialogueManager;
+        _dailyPlanService = dailyPlanService;
     }
 
     public override async Task<TriggerDialogueResponse> TriggerDialogue(TriggerDialogueRequest request, ServerCallContext context)
@@ -55,6 +58,11 @@ public class MundusVivensGrpcService : MundusVivensGrpc.MundusVivensGrpcBase
             if (result.StructuredLines != null)
             {
                 response.StructuredLines.AddRange(result.StructuredLines);
+            }
+
+            if (result.EmotionUpdates != null)
+            {
+                response.EmotionUpdates.AddRange(result.EmotionUpdates);
             }
 
             return response;
@@ -183,6 +191,22 @@ public class MundusVivensGrpcService : MundusVivensGrpc.MundusVivensGrpcBase
         };
         _ = _broadcaster.BroadcastAsync(tickEvent);
 
+        // 🆕 23틱 (자정 직전) 검출 시 백그라운드로 성찰 및 스케줄링 태스크 실행
+        if (request.TickNumber % 24 == 23)
+        {
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await _dailyPlanService.PerformReflectionAndGenerateSchedulesAsync(request.TickNumber);
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[Error] 백그라운드 성찰/스케줄 수립 실패: {ex.Message}");
+                }
+            });
+        }
+
         return Task.FromResult(new ProcessWorldTickResponse
         {
             Success = true,
@@ -206,6 +230,11 @@ public class MundusVivensGrpcService : MundusVivensGrpc.MundusVivensGrpcBase
                 if (result.StructuredLines != null)
                 {
                     response.Lines.AddRange(result.StructuredLines);
+                }
+
+                if (result.EmotionUpdates != null)
+                {
+                    response.EmotionUpdates.AddRange(result.EmotionUpdates);
                 }
             }
             else
@@ -319,5 +348,19 @@ public class MundusVivensGrpcService : MundusVivensGrpc.MundusVivensGrpcBase
         response.Locations.AddRange(locations);
 
         return Task.FromResult(response);
+    }
+
+    public override Task<GetDailySchedulesResponse> GetDailySchedules(GetDailySchedulesRequest request, ServerCallContext context)
+    {
+        Console.WriteLine($"📥 [gRPC] 일일 스케줄 데이터 요청 수신 (틱: {request.CurrentTick})");
+        try
+        {
+            var schedules = _dailyPlanService.GetSchedulesForTick(request.CurrentTick);
+            return Task.FromResult(schedules);
+        }
+        catch (Exception ex)
+        {
+            throw new RpcException(new Status(StatusCode.Internal, $"일정 조회 중 서버 오류 발생: {ex.Message}"));
+        }
     }
 }
