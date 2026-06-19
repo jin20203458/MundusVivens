@@ -20,7 +20,7 @@ public class DialogueResult
 
 public interface IDialogueOrchestrator
 {
-    Task<DialogueResult> RunConversationAsync(AgentInstance agentA, AgentInstance agentB, CancellationToken cancellationToken = default);
+    Task<DialogueResult> RunConversationAsync(AgentInstance agentA, AgentInstance agentB, string taskId = "", CancellationToken cancellationToken = default);
 }
 
 public class DialogueOrchestrator : IDialogueOrchestrator
@@ -42,7 +42,7 @@ public class DialogueOrchestrator : IDialogueOrchestrator
         _broadcaster = broadcaster;
     }
 
-    public async Task<DialogueResult> RunConversationAsync(AgentInstance agentA, AgentInstance agentB, CancellationToken cancellationToken = default)
+    public async Task<DialogueResult> RunConversationAsync(AgentInstance agentA, AgentInstance agentB, string taskId = "", CancellationToken cancellationToken = default)
     {
         Console.WriteLine($"\n=======================================================");
         Console.WriteLine($"💬 대화 시작: {agentA.Persona.Name} ({agentA.Persona.Job})  ◀ ▷  {agentB.Persona.Name} ({agentB.Persona.Job})");
@@ -147,7 +147,7 @@ public class DialogueOrchestrator : IDialogueOrchestrator
                 SystemInstruction: new Content("system", new List<Part> { new Part(systemPrompt) }),
                 Contents: apiContents,
                 SafetySettings: new List<SafetySetting> { new SafetySetting("HARM_CATEGORY_HARASSMENT", BlockThreshold.BLOCK_NONE) },
-                GenerationConfig: new GenerationConfig(null, 2048, "text/plain")
+                GenerationConfig: new GenerationConfig(null, 4000, "text/plain", null, new ThinkingConfig(ThinkingLevel.minimal))
             );
 
             string dialogueResponse = await _apiService.SendMessageAsync(request, ModelTier.Flash35, cancellationToken);
@@ -157,6 +157,30 @@ public class DialogueOrchestrator : IDialogueOrchestrator
             
             var chatMessage = new ChatMessage(currentSpeaker.AgentId, dialogueResponse);
             conversationHistory.Add(chatMessage);
+
+            // 실시간 대사 브로드캐스트
+            if (!string.IsNullOrEmpty(taskId))
+            {
+                var liveEvent = new WorldEvent
+                {
+                    Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                    Dialogue = new DialogueEvent
+                    {
+                        TaskId = taskId,
+                        AgentAId = agentA.AgentId,
+                        AgentBId = agentB.AgentId,
+                        Location = agentA.Status.CurrentLocation,
+                        IsStarted = true
+                    }
+                };
+                liveEvent.Dialogue.Lines.Add(new DialogueLine
+                {
+                    SpeakerId = currentSpeaker.AgentId,
+                    SpeakerName = currentSpeaker.Persona.Name,
+                    Text = dialogueResponse
+                });
+                await _broadcaster.BroadcastAsync(liveEvent);
+            }
 
             var temp = currentSpeaker;
             currentSpeaker = currentListener;
@@ -230,7 +254,7 @@ public class DialogueOrchestrator : IDialogueOrchestrator
         var postRequest = new GeminiRequest(
             SystemInstruction: new Content("system", new List<Part> { new Part(postProcessSystemPrompt) }),
             Contents: new List<Content> { new Content("user", new List<Part> { new Part("분석 시작.") }) },
-            GenerationConfig: new GenerationConfig(null, 400, "application/json")
+            GenerationConfig: new GenerationConfig(null, 2048, "application/json", null, new ThinkingConfig(ThinkingLevel.minimal))
         );
 
         string postResponse = await _apiService.SendMessageAsync(postRequest, ModelTier.FlashLite, cancellationToken);

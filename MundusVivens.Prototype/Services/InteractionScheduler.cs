@@ -223,7 +223,7 @@ public class InteractionScheduler : BackgroundService
                             };
                             await _broadcaster.BroadcastAsync(startEvent);
 
-                            var result = await _orchestrator.RunConversationAsync(agentA, agentB);
+                            var result = await _orchestrator.RunConversationAsync(agentA, agentB, job.JobId);
                             
                             var schedulerResult = new DialogueSchedulerResult
                             {

@@ -1,0 +1,1256 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mundus Vivens — 실시간 AI 모니터링 대시보드</title>
+    <!-- Google Fonts Inter -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-color: #080A10;
+            --panel-bg: rgba(21, 27, 43, 0.7);
+            --card-bg: rgba(30, 38, 58, 0.6);
+            --accent-cyan: #00F0FF;
+            --accent-blue: #00A3FF;
+            --accent-green: #10B981;
+            --accent-amber: #F59E0B;
+            --accent-pink: #EC4899;
+            --text-primary: #F3F4F6;
+            --text-secondary: #9CA3AF;
+            --text-muted: #6B7280;
+            --border-color: rgba(255, 255, 255, 0.08);
+            --font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            background-color: var(--bg-color);
+            color: var(--text-primary);
+            font-family: var(--font-family);
+            overflow-x: hidden;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+        }
+
+        /* Scrollbar styling */
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: rgba(255, 255, 255, 0.25);
+        }
+
+        /* Glassmorphism utility */
+        .glass {
+            background: var(--panel-bg);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+        }
+
+        /* Layout */
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 16px 24px;
+            border-bottom: 1px solid var(--border-color);
+            background: rgba(8, 10, 16, 0.85);
+            backdrop-filter: blur(8px);
+            z-index: 10;
+        }
+
+        .header-title {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .header-title h1 {
+            font-size: 20px;
+            font-weight: 700;
+            background: linear-gradient(135deg, #00F0FF 0%, #00A3FF 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            letter-spacing: -0.5px;
+        }
+
+        .header-status {
+            display: flex;
+            align-items: center;
+            gap: 20px;
+        }
+
+        .tick-badge {
+            background: rgba(0, 240, 255, 0.15);
+            border: 1px solid var(--accent-cyan);
+            color: var(--accent-cyan);
+            padding: 6px 14px;
+            border-radius: 20px;
+            font-weight: 600;
+            font-size: 13px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            box-shadow: 0 0 10px rgba(0, 240, 255, 0.2);
+        }
+
+        .main-container {
+            display: grid;
+            grid-template-columns: 320px 1fr 360px;
+            gap: 16px;
+            padding: 16px;
+            flex: 1;
+            overflow: hidden;
+        }
+
+        /* Left Panel - NPC Cards */
+        .left-panel {
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+            overflow-y: auto;
+            padding-right: 4px;
+        }
+
+        .npc-card {
+            padding: 16px;
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .npc-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 4px;
+            height: 100%;
+            background: var(--accent-color, var(--accent-cyan));
+        }
+
+        .npc-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+            border-color: rgba(255, 255, 255, 0.15);
+        }
+
+        .npc-card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 12px;
+        }
+
+        .npc-name {
+            font-size: 16px;
+            font-weight: 600;
+        }
+
+        .npc-job {
+            font-size: 12px;
+            color: var(--text-secondary);
+            background: rgba(255, 255, 255, 0.05);
+            padding: 2px 8px;
+            border-radius: 4px;
+            margin-top: 2px;
+            display: inline-block;
+        }
+
+        .npc-status-item {
+            font-size: 13px;
+            margin-bottom: 6px;
+            display: flex;
+            justify-content: space-between;
+        }
+
+        .npc-status-label {
+            color: var(--text-secondary);
+        }
+
+        .npc-status-value {
+            font-weight: 500;
+            color: var(--text-primary);
+        }
+
+        .relations-container {
+            margin-top: 12px;
+            padding-top: 12px;
+            border-top: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        .relations-title {
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: var(--text-muted);
+            margin-bottom: 8px;
+            font-weight: 600;
+        }
+
+        .relation-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            font-size: 12px;
+            margin-bottom: 4px;
+        }
+
+        .relation-bars {
+            display: flex;
+            gap: 8px;
+            width: 120px;
+        }
+
+        .relation-bar-wrap {
+            flex: 1;
+            height: 4px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 2px;
+            overflow: hidden;
+            position: relative;
+        }
+
+        .relation-bar-fill {
+            height: 100%;
+            border-radius: 2px;
+        }
+
+        .btn-talk {
+            width: 100%;
+            padding: 8px;
+            background: linear-gradient(135deg, var(--accent-cyan) 0%, var(--accent-blue) 100%);
+            color: #05070B;
+            border: none;
+            border-radius: 6px;
+            font-weight: 600;
+            font-size: 13px;
+            cursor: pointer;
+            margin-top: 12px;
+            transition: all 0.2s ease;
+        }
+
+        .btn-talk:hover {
+            opacity: 0.9;
+            transform: scale(1.02);
+            box-shadow: 0 0 12px rgba(0, 240, 255, 0.35);
+        }
+
+        /* Center Panel - Map & Speech Bubbles */
+        .center-panel {
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+            overflow: hidden;
+        }
+
+        .map-wrapper {
+            flex: 1;
+            position: relative;
+            background: radial-gradient(circle at center, #111827 0%, #030712 100%);
+            border-radius: 12px;
+            border: 1px solid var(--border-color);
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 20px;
+            padding: 24px;
+            min-height: 380px;
+            align-items: center;
+        }
+
+        .location-node {
+            height: 100%;
+            min-height: 300px;
+            border-radius: 10px;
+            border: 1px dashed rgba(255, 255, 255, 0.1);
+            background: rgba(17, 24, 39, 0.4);
+            display: flex;
+            flex-direction: column;
+            position: relative;
+            padding: 16px;
+            transition: all 0.3s ease;
+        }
+
+        .location-node:hover {
+            background: rgba(17, 24, 39, 0.6);
+            border-color: rgba(255, 255, 255, 0.2);
+        }
+
+        .location-header {
+            font-size: 15px;
+            font-weight: 700;
+            margin-bottom: 16px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            letter-spacing: -0.2px;
+        }
+
+        .location-badge-container {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            flex: 1;
+            justify-content: center;
+            align-items: center;
+            position: relative;
+        }
+
+        /* NPC Map Badge */
+        .map-npc-badge {
+            background: var(--card-bg);
+            border: 1px solid var(--accent-color, var(--accent-cyan));
+            border-radius: 8px;
+            padding: 8px 14px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            position: relative;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.4);
+            transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+            animation: badge-enter 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+            z-index: 5;
+            cursor: pointer;
+        }
+
+        .map-npc-badge:hover {
+            transform: scale(1.05);
+            box-shadow: 0 0 15px var(--accent-color, var(--accent-cyan));
+            background: rgba(45, 55, 80, 0.8);
+        }
+
+        @keyframes badge-enter {
+            from {
+                opacity: 0;
+                transform: translateY(15px) scale(0.9);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0) scale(1);
+            }
+        }
+
+        .map-npc-dot {
+            width: 8px;
+            height: 8px;
+            background: var(--accent-color, var(--accent-cyan));
+            border-radius: 50%;
+            box-shadow: 0 0 8px var(--accent-color, var(--accent-cyan));
+        }
+
+        .map-npc-name {
+            font-size: 13px;
+            font-weight: 600;
+        }
+
+        /* Floating Speech Bubble */
+        .speech-bubble {
+            position: absolute;
+            bottom: calc(100% + 12px);
+            left: 50%;
+            transform: translateX(-50%) scale(0);
+            background: rgba(15, 23, 42, 0.95);
+            border: 1px solid var(--bubble-border, var(--accent-cyan));
+            color: var(--text-primary);
+            padding: 10px 16px;
+            border-radius: 8px;
+            width: 220px;
+            font-size: 13px;
+            line-height: 1.45;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+            pointer-events: none;
+            opacity: 0;
+            transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            z-index: 20;
+            word-break: keep-all;
+        }
+
+        .speech-bubble.active {
+            transform: translateX(-50%) scale(1);
+            opacity: 1;
+        }
+
+        .speech-bubble::after {
+            content: '';
+            position: absolute;
+            top: 100%;
+            left: 50%;
+            transform: translateX(-50%);
+            border-width: 6px;
+            border-style: solid;
+            border-color: var(--bubble-border, var(--accent-cyan)) transparent transparent transparent;
+        }
+
+        /* Token stats container */
+        .token-stats {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 12px;
+            padding: 16px;
+        }
+
+        .stat-box {
+            padding: 12px;
+            text-align: center;
+            border-radius: 8px;
+            background: rgba(30, 38, 58, 0.4);
+            border: 1px solid var(--border-color);
+        }
+
+        .stat-value {
+            font-size: 16px;
+            font-weight: 700;
+            margin-top: 4px;
+            color: var(--accent-cyan);
+        }
+
+        .stat-label {
+            font-size: 11px;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        /* Right Panel - Log Stream */
+        .right-panel {
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+            overflow: hidden;
+        }
+
+        .panel-header-tabs {
+            display: flex;
+            border-bottom: 1px solid var(--border-color);
+            margin-bottom: 8px;
+        }
+
+        .tab-btn {
+            flex: 1;
+            padding: 10px;
+            background: transparent;
+            border: none;
+            color: var(--text-secondary);
+            font-size: 13px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+            border-bottom: 2px solid transparent;
+        }
+
+        .tab-btn.active {
+            color: var(--accent-cyan);
+            border-bottom-color: var(--accent-cyan);
+            font-weight: 600;
+        }
+
+        .log-container {
+            flex: 1;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            padding: 8px;
+            border-radius: 8px;
+            background: rgba(5, 7, 12, 0.5);
+            border: 1px solid rgba(255, 255, 255, 0.03);
+            font-family: 'Consolas', 'Courier New', monospace;
+            font-size: 12px;
+        }
+
+        .log-item {
+            padding: 8px 12px;
+            border-radius: 6px;
+            line-height: 1.4;
+            background: rgba(255, 255, 255, 0.02);
+            border-left: 3px solid #4B5563;
+        }
+
+        .log-item.tick {
+            border-left-color: var(--accent-cyan);
+            background: rgba(0, 240, 255, 0.03);
+            color: var(--accent-cyan);
+            font-weight: 600;
+        }
+
+        .log-item.move {
+            border-left-color: var(--accent-amber);
+            background: rgba(245, 158, 11, 0.03);
+        }
+
+        .log-item.dialogue {
+            border-left-color: var(--accent-green);
+            background: rgba(16, 185, 129, 0.03);
+        }
+
+        .log-time {
+            color: var(--text-muted);
+            margin-right: 6px;
+        }
+
+        /* Modal Overlay - Player Chat Box */
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            background: rgba(5, 7, 12, 0.85);
+            backdrop-filter: blur(8px);
+            z-index: 100;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.3s ease;
+        }
+
+        .modal-overlay.active {
+            opacity: 1;
+            pointer-events: auto;
+        }
+
+        .chat-box {
+            width: 600px;
+            height: 500px;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            animation: modal-zoom 0.3s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+        }
+
+        @keyframes modal-zoom {
+            from {
+                transform: scale(0.9) translateY(20px);
+            }
+            to {
+                transform: scale(1) translateY(0);
+            }
+        }
+
+        .chat-header {
+            padding: 16px 20px;
+            border-bottom: 1px solid var(--border-color);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: rgba(255, 255, 255, 0.02);
+        }
+
+        .chat-header-title h3 {
+            font-size: 16px;
+            font-weight: 600;
+        }
+
+        .chat-header-subtitle {
+            font-size: 11px;
+            color: var(--text-secondary);
+            margin-top: 2px;
+        }
+
+        .btn-close {
+            background: transparent;
+            border: none;
+            color: var(--text-secondary);
+            font-size: 20px;
+            cursor: pointer;
+            padding: 4px;
+            transition: color 0.2s;
+        }
+
+        .btn-close:hover {
+            color: var(--accent-pink);
+        }
+
+        .chat-messages {
+            flex: 1;
+            padding: 20px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            background: rgba(5, 7, 12, 0.3);
+        }
+
+        .message-bubble {
+            max-width: 80%;
+            padding: 10px 14px;
+            border-radius: 8px;
+            font-size: 13px;
+            line-height: 1.45;
+            position: relative;
+            word-break: keep-all;
+        }
+
+        .message-bubble.npc {
+            align-self: flex-start;
+            background: var(--card-bg);
+            border: 1px solid rgba(255,255,255,0.05);
+            border-bottom-left-radius: 2px;
+            color: var(--text-primary);
+        }
+
+        .message-bubble.player {
+            align-self: flex-end;
+            background: linear-gradient(135deg, var(--accent-cyan) 0%, var(--accent-blue) 100%);
+            color: #05070B;
+            border-bottom-right-radius: 2px;
+            font-weight: 500;
+        }
+
+        .message-bubble.system {
+            align-self: center;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255,255,255,0.05);
+            color: var(--text-secondary);
+            font-size: 12px;
+            max-width: 90%;
+            border-radius: 15px;
+            padding: 4px 16px;
+        }
+
+        .message-sender {
+            font-size: 10px;
+            color: var(--text-muted);
+            margin-bottom: 2px;
+        }
+
+        .chat-input-area {
+            padding: 16px;
+            border-top: 1px solid var(--border-color);
+            display: flex;
+            gap: 10px;
+            background: rgba(255, 255, 255, 0.01);
+        }
+
+        .chat-input {
+            flex: 1;
+            background: rgba(0, 0, 0, 0.3);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            padding: 10px 14px;
+            color: var(--text-primary);
+            font-family: var(--font-family);
+            font-size: 13px;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+
+        .chat-input:focus {
+            border-color: var(--accent-cyan);
+        }
+
+        .btn-send {
+            padding: 0 16px;
+            background: var(--accent-cyan);
+            color: #05070B;
+            border: none;
+            border-radius: 6px;
+            font-weight: 600;
+            font-size: 13px;
+            cursor: pointer;
+            transition: opacity 0.2s;
+        }
+
+        .btn-send:hover {
+            opacity: 0.9;
+        }
+
+        .btn-end-chat {
+            padding: 8px 16px;
+            background: rgba(239, 68, 68, 0.15);
+            border: 1px solid #EF4444;
+            color: #EF4444;
+            border-radius: 6px;
+            font-weight: 600;
+            font-size: 12px;
+            cursor: pointer;
+            margin: 12px auto;
+            display: block;
+            transition: all 0.2s;
+        }
+
+        .btn-end-chat:hover {
+            background: #EF4444;
+            color: white;
+        }
+
+        .loading-dots {
+            display: inline-flex;
+            gap: 4px;
+            align-items: center;
+            height: 10px;
+            padding: 0 4px;
+        }
+
+        .loading-dots span {
+            width: 5px;
+            height: 5px;
+            background: var(--text-secondary);
+            border-radius: 50%;
+            animation: typing 1s infinite alternate;
+        }
+
+        .loading-dots span:nth-child(2) { animation-delay: 0.2s; }
+        .loading-dots span:nth-child(3) { animation-delay: 0.4s; }
+
+        @keyframes typing {
+            from { opacity: 0.2; transform: translateY(0); }
+            to { opacity: 1; transform: translateY(-4px); }
+        }
+    </style>
+</head>
+<body>
+
+    <header>
+        <div class="header-title">
+            <h1>🌍 Mundus Vivens — Live AI Agentic Dashboard</h1>
+        </div>
+        <div class="header-status">
+            <div id="tickBadge" class="tick-badge">
+                <span>⏱️</span> <span id="tickValue">Tick --</span>
+            </div>
+        </div>
+    </header>
+
+    <div class="main-container">
+        <!-- Left Panel: NPCs -->
+        <div class="left-panel" id="npcContainer">
+            <!-- Dynamic Injection -->
+        </div>
+
+        <!-- Center Panel: Map & Status -->
+        <div class="center-panel">
+            <div class="map-wrapper" id="townMap">
+                <!-- Location: Church -->
+                <div class="location-node" id="loc_Church" style="--accent-color: #A78BFA;">
+                    <div class="location-header" style="color: #A78BFA;">⛪ 성당 (Church)</div>
+                    <div class="location-badge-container" id="badges_Church"></div>
+                </div>
+
+                <!-- Location: Tavern -->
+                <div class="location-node" id="loc_Tavern" style="--accent-color: #FBBF24;">
+                    <div class="location-header" style="color: #FBBF24;">🍺 술집 (Tavern)</div>
+                    <div class="location-badge-container" id="badges_Tavern"></div>
+                </div>
+
+                <!-- Location: Square -->
+                <div class="location-node" id="loc_Square" style="--accent-color: #22D3EE;">
+                    <div class="location-header" style="color: #22D3EE;">⛲ 광장 (Square)</div>
+                    <div class="location-badge-container" id="badges_Square"></div>
+                </div>
+            </div>
+
+            <!-- Stats -->
+            <div class="token-stats glass">
+                <div class="stat-box">
+                    <div class="stat-label">Prompt Tokens</div>
+                    <div id="statPrompt" class="stat-value">0</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-label">Output Tokens</div>
+                    <div id="statCompletion" class="stat-value">0</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-label">Thinking Tokens</div>
+                    <div id="statThinking" class="stat-value">0</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-label">Estimated Cost</div>
+                    <div id="statCost" class="stat-value" style="color: var(--accent-green);">$0.000</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Right Panel: Logs -->
+        <div class="right-panel">
+            <div class="panel-header-tabs">
+                <button id="tabLive" class="tab-btn active" onclick="switchTab('live')">실시간 로그 (Live)</button>
+                <button id="tabMemory" class="tab-btn" onclick="switchTab('memory')">기억 전문 데이터 (Memory)</button>
+            </div>
+            
+            <div id="liveLogArea" class="log-container">
+                <!-- Live logs -->
+            </div>
+            
+            <div id="memoryLogArea" class="log-container" style="display: none; white-space: pre-wrap;">
+                <!-- Memory logs -->
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal dialogue box -->
+    <div class="modal-overlay" id="dialogueModal">
+        <div class="chat-box glass">
+            <div class="chat-header">
+                <div class="chat-header-title">
+                    <h3 id="modalNpcName">NPC 이름</h3>
+                    <div class="chat-header-subtitle">Gemini LLM 실시간 인터랙션 세션</div>
+                </div>
+                <button class="btn-close" onclick="closeDialogueModal()">&times;</button>
+            </div>
+            <div class="chat-messages" id="chatMessages">
+                <!-- Messages -->
+            </div>
+            <div class="chat-input-area">
+                <input type="text" id="chatInput" class="chat-input" placeholder="대화를 입력하세요..." onkeydown="if(event.key === 'Enter') sendPlayerMessage()">
+                <button class="btn-send" onclick="sendPlayerMessage()">전송</button>
+            </div>
+            <button class="btn-end-chat" onclick="endPlayerDialogue()">대화 종료 및 기억 통합</button>
+        </div>
+    </div>
+
+    <script>
+        const NPC_METADATA = {
+            'npc_kyle': { name: '카일', job: '성직자', color: '#A78BFA' },
+            'npc_eva': { name: '에바', job: '술집 바텐더', color: '#F472B6' },
+            'npc_bart': { name: '바르트', job: '노용병', color: '#34D399' },
+            'player': { name: '플레이어', job: '여행자', color: '#38BDF8' }
+        };
+
+        let currentActiveSession = null;
+        let activeNpcId = null;
+
+        // Initialize Page
+        window.addEventListener('DOMContentLoaded', () => {
+            refreshAgents();
+            refreshStats();
+            setupSSE();
+
+            // Auto refresh stats & memory logs
+            setInterval(refreshStats, 5000);
+        });
+
+        // 1. Fetch Agents Status
+        function refreshAgents() {
+            fetch('/api/agents')
+                .then(res => res.json())
+                .then(agents => {
+                    renderNpcCards(agents);
+                    updateNpcMapBadges(agents);
+                })
+                .catch(err => console.error("Error fetching agents:", err));
+        }
+
+        // Render Left Panel cards
+        function renderNpcCards(agents) {
+            const container = document.getElementById('npcContainer');
+            container.innerHTML = '';
+
+            agents.forEach(agent => {
+                // Skip player from NPC list, but show relationships
+                if (agent.agentId === 'player') return;
+
+                const meta = NPC_METADATA[agent.agentId] || { name: agent.name, job: agent.job, color: '#00F0FF' };
+                
+                const card = document.createElement('div');
+                card.className = 'npc-card glass';
+                card.style.setProperty('--accent-color', meta.color);
+
+                // Build relationship rows
+                let relationsHtml = '';
+                if (agent.relationships && agent.relationships.length > 0) {
+                    relationsHtml = `<div class="relations-container">
+                        <div class="relations-title">인물 관계망 (호감도 / 신뢰도)</div>`;
+                    agent.relationships.forEach(rel => {
+                        const targetMeta = NPC_METADATA[rel.targetAgentId] || { name: rel.targetAgentId };
+                        relationsHtml += `
+                            <div class="relation-row">
+                                <span>${targetMeta.name}</span>
+                                <div class="relation-bars">
+                                    <div class="relation-bar-wrap" title="호감도: ${rel.liking}">
+                                        <div class="relation-bar-fill" style="width: ${Math.max(0, Math.min(100, (rel.liking + 50)))}%; background: ${rel.liking >= 0 ? '#10B981' : '#EF4444'}"></div>
+                                    </div>
+                                    <div class="relation-bar-wrap" title="신뢰도: ${rel.trust}">
+                                        <div class="relation-bar-fill" style="width: ${Math.max(0, Math.min(100, rel.trust))}%; background: #00A3FF"></div>
+                                    </div>
+                                </div>
+                            </div>
+                        `;
+                    });
+                    relationsHtml += '</div>';
+                }
+
+                card.innerHTML = `
+                    <div class="npc-card-header">
+                        <div>
+                            <div class="npc-name">${meta.name}</div>
+                            <div class="npc-job">${meta.job}</div>
+                        </div>
+                    </div>
+                    <div class="npc-status-item">
+                        <span class="npc-status-label">현재 위치</span>
+                        <span class="npc-status-value" style="color: ${meta.color}">${agent.currentLocation}</span>
+                    </div>
+                    <div class="npc-status-item">
+                        <span class="npc-status-label">감정 상태</span>
+                        <span class="npc-status-value">${agent.emotion}</span>
+                    </div>
+                    <div class="npc-status-item">
+                        <span class="npc-status-label">현재 행동</span>
+                        <span class="npc-status-value">${agent.activity}</span>
+                    </div>
+                    ${relationsHtml}
+                    <button class="btn-talk" onclick="openDialogueModal('${agent.agentId}')">대화하기</button>
+                `;
+
+                container.appendChild(card);
+            });
+        }
+
+        // Render Map badges
+        function updateNpcMapBadges(agents) {
+            // Clear containers
+            document.getElementById('badges_Church').innerHTML = '';
+            document.getElementById('badges_Tavern').innerHTML = '';
+            document.getElementById('badges_Square').innerHTML = '';
+
+            agents.forEach(agent => {
+                const meta = NPC_METADATA[agent.agentId] || { name: agent.name, color: '#00F0FF' };
+                let locId = 'Square';
+                if (agent.currentLocation.includes('Church') || agent.currentLocation.includes('성당')) {
+                    locId = 'Church';
+                } else if (agent.currentLocation.includes('Tavern') || agent.currentLocation.includes('술집')) {
+                    locId = 'Tavern';
+                }
+
+                const targetContainer = document.getElementById(`badges_${locId}`);
+                if (!targetContainer) return;
+
+                const badge = document.createElement('div');
+                badge.className = 'map-npc-badge';
+                badge.id = `map_badge_${agent.agentId}`;
+                badge.style.setProperty('--accent-color', meta.color);
+                badge.onclick = () => openDialogueModal(agent.agentId);
+
+                badge.innerHTML = `
+                    <div class="map-npc-dot"></div>
+                    <span class="map-npc-name">${meta.name}</span>
+                    <div class="speech-bubble" id="bubble_${agent.agentId}" style="--bubble-border: ${meta.color}"></div>
+                `;
+
+                targetContainer.appendChild(badge);
+            });
+        }
+
+        // 2. Server-Sent Events (SSE) Setup
+        function setupSSE() {
+            const eventSource = new EventSource('/api/events');
+
+            eventSource.onopen = () => {
+                addLogItem("SSE 스트림 연결 성공", "tick");
+            };
+
+            eventSource.onerror = (e) => {
+                console.error("SSE Connection error, retrying...", e);
+            };
+
+            eventSource.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    
+                    // 1. Tick Event
+                    if (data.tick) {
+                        const tickNum = data.tick.tickNumber;
+                        document.getElementById('tickValue').innerText = `Tick ${tickNum}`;
+                        addLogItem(`⏱️ World Tick 진행 통보 수신: 틱 ${tickNum}`, "tick");
+                        refreshAgents();
+                    }
+                    
+                    // 2. Movement Event
+                    if (data.movement) {
+                        const agentMeta = NPC_METADATA[data.movement.agentId] || { name: data.movement.agentId };
+                        addLogItem(`🏃 ${agentMeta.name}: ${data.movement.fromLocation} ➔ ${data.movement.toLocation} 이동 발생`, "move");
+                        refreshAgents();
+                    }
+
+                    // 3. Live Dialogue Event (NPC-NPC)
+                    if (data.dialogue) {
+                        const d = data.dialogue;
+                        if (d.lines && d.lines.length > 0) {
+                            d.lines.forEach(line => {
+                                // Trigger speech bubble
+                                showSpeechBubble(line.speakerId, line.text);
+                                
+                                const speakerMeta = NPC_METADATA[line.speakerId] || { name: line.speakerName };
+                                addLogItem(`💬 ${speakerMeta.name}: "${line.text}"`, "dialogue");
+                            });
+                        }
+                    }
+                } catch (err) {
+                    console.error("Error parsing SSE data", err, event.data);
+                }
+            };
+        }
+
+        // Show bubble on map NPC
+        function showSpeechBubble(agentId, text) {
+            const bubble = document.getElementById(`bubble_${agentId}`);
+            if (!bubble) return;
+
+            bubble.innerText = text;
+            bubble.classList.add('active');
+
+            // Auto hide after 4 seconds
+            if (bubble.timeout) clearTimeout(bubble.timeout);
+            bubble.timeout = setTimeout(() => {
+                bubble.classList.remove('active');
+            }, 4000);
+        }
+
+        // Add item to scrolling logger
+        function addLogItem(text, type) {
+            const container = document.getElementById('liveLogArea');
+            const item = document.createElement('div');
+            item.className = `log-item ${type}`;
+
+            const timeSpan = document.createElement('span');
+            timeSpan.className = 'log-time';
+            const now = new Date();
+            timeSpan.innerText = `[${now.toLocaleTimeString()}]`;
+
+            const textSpan = document.createElement('span');
+            textSpan.innerText = text;
+
+            item.appendChild(timeSpan);
+            item.appendChild(textSpan);
+            container.appendChild(item);
+
+            // Auto scroll
+            container.scrollTop = container.scrollHeight;
+        }
+
+        // 3. Stats polling
+        function refreshStats() {
+            fetch('/api/logs/tokens')
+                .then(res => res.json())
+                .then(stats => {
+                    document.getElementById('statPrompt').innerText = stats.totalPromptTokens.toLocaleString();
+                    document.getElementById('statCompletion').innerText = stats.totalCompletionTokens.toLocaleString();
+                    document.getElementById('statThinking').innerText = stats.totalThinkingTokens.toLocaleString();
+                    document.getElementById('statCost').innerText = `$${stats.approximateCostUsd.toFixed(4)}`;
+                })
+                .catch(err => console.error(err));
+
+            // Refresh Memory log if tab active
+            if (document.getElementById('memoryLogArea').style.display !== 'none') {
+                refreshMemoryLogs();
+            }
+        }
+
+        function refreshMemoryLogs() {
+            fetch('/api/logs/memory')
+                .then(res => res.text())
+                .then(logs => {
+                    document.getElementById('memoryLogArea').innerText = logs || "기록이 아직 없습니다.";
+                })
+                .catch(err => console.error(err));
+        }
+
+        // Tabs
+        function switchTab(tab) {
+            if (tab === 'live') {
+                document.getElementById('tabLive').classList.add('active');
+                document.getElementById('tabMemory').classList.remove('active');
+                document.getElementById('liveLogArea').style.display = 'flex';
+                document.getElementById('memoryLogArea').style.display = 'none';
+            } else {
+                document.getElementById('tabLive').classList.remove('active');
+                document.getElementById('tabMemory').classList.add('active');
+                document.getElementById('liveLogArea').style.display = 'none';
+                document.getElementById('memoryLogArea').style.display = 'block';
+                refreshMemoryLogs();
+            }
+        }
+
+        // 4. Player dialogue console (Modal)
+        function openDialogueModal(npcId) {
+            activeNpcId = npcId;
+            const npcMeta = NPC_METADATA[npcId];
+            document.getElementById('modalNpcName').innerText = `${npcMeta.name} (${npcMeta.job})`;
+            
+            // Clean chat log
+            const messagesWrap = document.getElementById('chatMessages');
+            messagesWrap.innerHTML = '';
+            
+            appendSystemMessage("대화 세션 개설 요청 중...");
+            document.getElementById('dialogueModal').classList.add('active');
+
+            // Send start request
+            fetch('/api/player/dialogue/start', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ playerId: 'player', npcId: npcId })
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.success) {
+                    currentActiveSession = data.sessionId;
+                    messagesWrap.innerHTML = ''; // Clear loading
+                    appendSystemMessage("대화가 성공적으로 시작되었습니다.");
+                    appendNpcMessage(npcId, data.greeting);
+                } else {
+                    appendSystemMessage(`대화 실패: ${data.message}`);
+                }
+            })
+            .catch(err => {
+                appendSystemMessage(`네트워크 오류: ${err.message}`);
+            });
+        }
+
+        // Close modal
+        function closeDialogueModal() {
+            document.getElementById('dialogueModal').classList.remove('active');
+            currentActiveSession = null;
+            activeNpcId = null;
+            refreshAgents();
+        }
+
+        function sendPlayerMessage() {
+            const input = document.getElementById('chatInput');
+            const text = input.value.trim();
+            if (!text || !currentActiveSession) return;
+
+            input.value = '';
+            appendPlayerMessage(text);
+
+            // Show typing indicator
+            const typingId = showTypingIndicator();
+
+            fetch('/api/player/dialogue/send', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ sessionId: currentActiveSession, message: text })
+            })
+            .then(res => res.json())
+            .then(data => {
+                removeTypingIndicator(typingId);
+                if (data.reply) {
+                    appendNpcMessage(activeNpcId, data.reply);
+                } else {
+                    appendSystemMessage("오류: 빈 답변을 받았습니다.");
+                }
+            })
+            .catch(err => {
+                removeTypingIndicator(typingId);
+                appendSystemMessage(`전송 실패: ${err.message}`);
+            });
+        }
+
+        function endPlayerDialogue() {
+            if (!currentActiveSession) return;
+
+            appendSystemMessage("대화 종료 및 기록 요약 저장 중...");
+
+            fetch('/api/player/dialogue/end', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ sessionId: currentActiveSession })
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.success) {
+                    appendSystemMessage("<b>대화가 종료되었습니다. 요약 결과:</b>");
+                    appendSystemMessage(`<span style="color: var(--accent-amber); font-style: italic;">"${data.summary}"</span>`);
+                    currentActiveSession = null;
+                } else {
+                    appendSystemMessage("종료 실패");
+                }
+            })
+            .catch(err => {
+                appendSystemMessage(`종료 오류: ${err.message}`);
+            });
+        }
+
+        // Helpers for appending messages
+        function appendSystemMessage(html) {
+            const container = document.getElementById('chatMessages');
+            const item = document.createElement('div');
+            item.className = 'message-bubble system';
+            item.innerHTML = html;
+            container.appendChild(item);
+            container.scrollTop = container.scrollHeight;
+        }
+
+        function appendPlayerMessage(text) {
+            const container = document.getElementById('chatMessages');
+            const item = document.createElement('div');
+            item.className = 'message-bubble player';
+            item.innerText = text;
+            container.appendChild(item);
+            container.scrollTop = container.scrollHeight;
+        }
+
+        function appendNpcMessage(npcId, text) {
+            const container = document.getElementById('chatMessages');
+            const wrap = document.createElement('div');
+            wrap.style.display = 'flex';
+            wrap.style.flexDirection = 'column';
+            wrap.style.alignItems = 'flex-start';
+
+            const sender = document.createElement('span');
+            sender.className = 'message-sender';
+            const meta = NPC_METADATA[npcId] || { name: npcId };
+            sender.innerText = meta.name;
+
+            const bubble = document.createElement('div');
+            bubble.className = 'message-bubble npc';
+            bubble.innerText = text;
+
+            wrap.appendChild(sender);
+            wrap.appendChild(bubble);
+            container.appendChild(wrap);
+            container.scrollTop = container.scrollHeight;
+        }
+
+        function showTypingIndicator() {
+            const container = document.getElementById('chatMessages');
+            const wrap = document.createElement('div');
+            const id = 'typing_' + Date.now();
+            wrap.id = id;
+            wrap.style.display = 'flex';
+            wrap.style.flexDirection = 'column';
+            wrap.style.alignItems = 'flex-start';
+
+            const sender = document.createElement('span');
+            sender.className = 'message-sender';
+            sender.innerText = NPC_METADATA[activeNpcId]?.name || activeNpcId;
+
+            const bubble = document.createElement('div');
+            bubble.className = 'message-bubble npc';
+            bubble.innerHTML = `<div class="loading-dots"><span></span><span></span><span></span></div>`;
+
+            wrap.appendChild(sender);
+            wrap.appendChild(bubble);
+            container.appendChild(wrap);
+            container.scrollTop = container.scrollHeight;
+
+            return id;
+        }
+
+        function removeTypingIndicator(id) {
+            const el = document.getElementById(id);
+            if (el) el.remove();
+        }
+    </script>
+</body>
+</html>

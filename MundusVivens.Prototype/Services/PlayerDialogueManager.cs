@@ -141,7 +141,7 @@ namespace MundusVivens.Prototype.Services
             var request = new GeminiRequest(
                 SystemInstruction: new Content("system", new List<Part> { new Part(systemPrompt) }),
                 Contents: new List<Content> { new Content("user", new List<Part> { new Part("인사를 시작하십시오.") }) },
-                GenerationConfig: new GenerationConfig(null, 1000)
+                GenerationConfig: new GenerationConfig(null, 4000, "text/plain", null, new ThinkingConfig(ThinkingLevel.minimal))
             );
 
             string greeting = await _apiService.SendMessageAsync(request, ModelTier.Flash35, cancellationToken);
@@ -235,7 +235,7 @@ namespace MundusVivens.Prototype.Services
             var request = new GeminiRequest(
                 SystemInstruction: new Content("system", new List<Part> { new Part(systemPrompt) }),
                 Contents: contents,
-                GenerationConfig: new GenerationConfig(null, 1000)
+                GenerationConfig: new GenerationConfig(null, 4000, "text/plain", null, new ThinkingConfig(ThinkingLevel.minimal))
             );
 
             string reply = await _apiService.SendMessageAsync(request, ModelTier.Flash35, cancellationToken);
@@ -304,7 +304,7 @@ namespace MundusVivens.Prototype.Services
             var postRequest = new GeminiRequest(
                 SystemInstruction: new Content("system", new List<Part> { new Part(postProcessSystemPrompt) }),
                 Contents: new List<Content> { new Content("user", new List<Part> { new Part("분석 시작.") }) },
-                GenerationConfig: new GenerationConfig(null, 400, "application/json")
+                GenerationConfig: new GenerationConfig(null, 2048, "application/json", null, new ThinkingConfig(ThinkingLevel.minimal))
             );
 
             string postResponse = await _apiService.SendMessageAsync(postRequest, ModelTier.FlashLite, cancellationToken);

@@ -10,12 +10,14 @@ namespace MundusVivens.Prototype.Services
 {
     public interface IWorldEventBroadcaster
     {
+        event Action<WorldEvent>? OnWorldEvent;
         Task SubscribeAsync(string subscriberId, IServerStreamWriter<WorldEvent> responseStream, CancellationToken cancellationToken);
         Task BroadcastAsync(WorldEvent worldEvent);
     }
 
     public class WorldEventBroadcaster : IWorldEventBroadcaster
     {
+        public event Action<WorldEvent>? OnWorldEvent;
         private readonly ILogger<WorldEventBroadcaster> _logger;
         private readonly ConcurrentDictionary<string, IServerStreamWriter<WorldEvent>> _subscribers = new();
 
@@ -66,6 +68,15 @@ namespace MundusVivens.Prototype.Services
 
         public async Task BroadcastAsync(WorldEvent worldEvent)
         {
+            try
+            {
+                OnWorldEvent?.Invoke(worldEvent);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError($"[Broadcaster] SSE event publish failed: {ex.Message}");
+            }
+
             if (_subscribers.IsEmpty)
             {
                 return;

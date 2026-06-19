@@ -6,6 +6,7 @@ using Microsoft.Extensions.Hosting;
 using MundusVivens.Prototype.Helpers;
 using MundusVivens.Prototype.Models;
 using MundusVivens.Prototype.Services;
+using MundusVivens.Prototype.Protos;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
@@ -73,7 +74,20 @@ public class Program
         // gRPC 서비스 등록
         builder.Services.AddGrpc();
 
+        // CORS 서비스 등록 (웹 대시보드의 원활한 접근 허용)
+        builder.Services.AddCors(options =>
+        {
+            options.AddDefaultPolicy(policy =>
+            {
+                policy.AllowAnyOrigin()
+                      .AllowAnyHeader()
+                      .AllowAnyMethod();
+            });
+        });
+
         var app = builder.Build();
+
+        app.UseCors();
 
         // 3. gRPC 라우팅 매핑
         app.MapGrpcService<MundusVivensGrpcService>();
@@ -297,12 +311,116 @@ public class Program
             return Results.Ok(new { Message = $"에이전트 '{targetAgent.Persona.Name}'에게 소문 주입 완료" });
         });
 
+        // 1. 대시보드 뷰어 서빙
+        app.MapGet("/", async () =>
+        {
+            var path = Path.Combine(Directory.GetCurrentDirectory(), "wwwroot", "index.html");
+            if (!File.Exists(path))
+            {
+                path = Path.Combine(AppContext.BaseDirectory, "wwwroot", "index.html");
+            }
+
+            if (!File.Exists(path))
+            {
+                return Results.NotFound("Dashboard UI file (wwwroot/index.html) not found. Please verify placement.");
+            }
+
+            return Results.Content(await File.ReadAllTextAsync(path, Encoding.UTF8), "text/html", Encoding.UTF8);
+        });
+
+        // 2. Server-Sent Events (SSE) 실시간 이벤트 스트림
+        app.MapGet("/api/events", async (HttpContext httpContext, IWorldEventBroadcaster broadcaster, CancellationToken ct) =>
+        {
+            httpContext.Response.ContentType = "text/event-stream";
+            httpContext.Response.Headers.CacheControl = "no-cache";
+            httpContext.Response.Headers.Connection = "keep-alive";
+
+            var channel = System.Threading.Channels.Channel.CreateUnbounded<WorldEvent>();
+            Action<WorldEvent> onEvent = (ev) => channel.Writer.TryWrite(ev);
+            broadcaster.OnWorldEvent += onEvent;
+
+            try
+            {
+                await httpContext.Response.WriteAsync($": welcome\n\n", ct);
+                await httpContext.Response.Body.FlushAsync(ct);
+
+                while (!ct.IsCancellationRequested)
+                {
+                    var ev = await channel.Reader.ReadAsync(ct);
+                    var json = Google.Protobuf.JsonFormatter.Default.Format(ev);
+                    await httpContext.Response.WriteAsync($"data: {json}\n\n", ct);
+                    await httpContext.Response.Body.FlushAsync(ct);
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                // Normal disconnect
+            }
+            finally
+            {
+                broadcaster.OnWorldEvent -= onEvent;
+            }
+        });
+
+        // 3. 플레이어 대화 제어 REST API
+        app.MapPost("/api/player/dialogue/start", async (StartPlayerDialogueApiRequest req, IPlayerDialogueManager mgr, CancellationToken ct) =>
+        {
+            try
+            {
+                var (success, message, sessionId, greeting) = await mgr.StartDialogueAsync(req.PlayerId, req.NpcId, ct);
+                return Results.Ok(new
+                {
+                    Success = success,
+                    Message = message,
+                    SessionId = sessionId,
+                    Greeting = greeting
+                });
+            }
+            catch (Exception ex)
+            {
+                return Results.BadRequest(new { Error = ex.Message });
+            }
+        });
+
+        app.MapPost("/api/player/dialogue/send", async (SendPlayerMessageApiRequest req, IPlayerDialogueManager mgr, CancellationToken ct) =>
+        {
+            try
+            {
+                var reply = await mgr.SendMessageAsync(req.SessionId, req.Message, ct);
+                return Results.Ok(new { Reply = reply });
+            }
+            catch (Exception ex)
+            {
+                return Results.BadRequest(new { Error = ex.Message });
+            }
+        });
+
+        app.MapPost("/api/player/dialogue/end", async (EndPlayerDialogueApiRequest req, IPlayerDialogueManager mgr, CancellationToken ct) =>
+        {
+            try
+            {
+                var (success, summary) = await mgr.EndDialogueAsync(req.SessionId, ct);
+                return Results.Ok(new
+                {
+                    Success = success,
+                    Summary = summary
+                });
+            }
+            catch (Exception ex)
+            {
+                return Results.BadRequest(new { Error = ex.Message });
+            }
+        });
+
         app.Run();
     }
 
     // REST API 바인딩 모델 정의
     public record InteractionRequest(string AgentIdA, string AgentIdB, bool? Wait);
     public record GossipInjectRequest(string SubjectId, string Content, string TargetAgentId);
+    public record StartPlayerDialogueApiRequest(string PlayerId, string NpcId);
+    public record SendPlayerMessageApiRequest(string SessionId, string Message);
+    public record EndPlayerDialogueApiRequest(string SessionId);
 
     private static ConcurrentDictionary<string, AgentInstance> InitializeAgents()
     {
