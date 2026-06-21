@@ -25,6 +25,9 @@ service MundusVivensGrpc {
 
   // 🆕 일일 스케줄 조회 RPC (Phase 5-1 신규)
   rpc GetDailySchedules (GetDailySchedulesRequest) returns (GetDailySchedulesResponse);
+
+  // 🆕 에이전트 상태 배치 업데이트 RPC (Phase 5-2 신규)
+  rpc BatchUpdateAgentStatus (BatchUpdateAgentStatusRequest) returns (BatchUpdateAgentStatusResponse);
 }
 
 message TriggerDialogueRequest {
@@ -236,5 +239,13 @@ message GetDailySchedulesRequest {
 
 message GetDailySchedulesResponse {
   repeated DailySchedule schedules = 1;
+}
+
+message BatchUpdateAgentStatusRequest {
+  repeated UpdateAgentStatusRequest agents = 1;
+}
+
+message BatchUpdateAgentStatusResponse {
+  int32 updated_count = 1;
 }
 

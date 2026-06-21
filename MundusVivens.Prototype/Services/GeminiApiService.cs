@@ -16,6 +16,7 @@ namespace MundusVivens.Prototype.Services;
 public interface IGeminiApiService
 {
     Task<string> SendMessageAsync(GeminiRequest request, ModelTier? overrideTier = null, CancellationToken cancellationToken = default);
+    Task<float[]> GetEmbeddingAsync(string text); // 🆕 임베딩 생성 API 연동 (Phase 5-2 신규)
     int TotalPromptTokens { get; }
     int TotalCompletionTokens { get; }
     int TotalTokens { get; }
@@ -205,6 +206,109 @@ public class GeminiApiService : IGeminiApiService
         catch (Exception ex)
         {
             return $"[System Error]: 호출 실패 - {ex.Message}";
+        }
+    }
+
+    public async Task<float[]> GetEmbeddingAsync(string text)
+    {
+        string requestUri;
+        using var httpRequest = new HttpRequestMessage(HttpMethod.Post, "");
+
+        if (_settings.UseVertexAI)
+        {
+            if (string.IsNullOrWhiteSpace(_settings.ProjectId))
+                throw new Exception("구글 클라우드 Project ID가 설정되지 않았습니다.");
+
+            string location = string.IsNullOrWhiteSpace(_settings.Location) ? "global" : _settings.Location.ToLower();
+            string embedLocation = location == "global" ? "us-central1" : location;
+            string hostName = $"{embedLocation}-aiplatform.googleapis.com";
+            
+            // Vertex AI는 predict 엔드포인트를 사용해야 합니다.
+            requestUri = $"https://{hostName}/v1beta1/projects/{_settings.ProjectId}/locations/{embedLocation}/publishers/google/models/text-embedding-004:predict";
+
+            var requestPayload = new
+            {
+                instances = new[]
+                {
+                    new { content = text }
+                }
+            };
+            string jsonPayload = JsonSerializer.Serialize(requestPayload);
+            httpRequest.Content = new StringContent(jsonPayload, Encoding.UTF8, "application/json");
+
+            try
+            {
+                string token = await _googleAuthService.GetGoogleAccessTokenAsync();
+                httpRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+            }
+            catch (Exception ex)
+            {
+                throw new Exception($"[System Error]: 인증 토큰 획득 실패. {ex.Message}");
+            }
+        }
+        else
+        {
+            if (string.IsNullOrWhiteSpace(_settings.ApiKey))
+                throw new Exception("API 키가 설정되지 않았습니다.");
+
+            requestUri = $"https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent?key={_settings.ApiKey}";
+
+            var requestPayload = new
+            {
+                content = new
+                {
+                    parts = new[]
+                    {
+                        new { text = text }
+                    }
+                }
+            };
+            string jsonPayload = JsonSerializer.Serialize(requestPayload);
+            httpRequest.Content = new StringContent(jsonPayload, Encoding.UTF8, "application/json");
+        }
+
+        httpRequest.RequestUri = new Uri(requestUri);
+
+        try
+        {
+            using var response = await _httpClient.SendAsync(httpRequest);
+            if (!response.IsSuccessStatusCode)
+            {
+                string errorContent = await response.Content.ReadAsStringAsync();
+                throw new Exception($"Gemini Embedding API 통신 실패 ({(int)response.StatusCode}): {errorContent}");
+            }
+
+            string responseBody = await response.Content.ReadAsStringAsync();
+            using var doc = JsonDocument.Parse(responseBody);
+            
+            JsonElement valuesObj;
+            if (_settings.UseVertexAI)
+            {
+                // Vertex AI는 predictions[0].embeddings.values 포맷을 가집니다.
+                var predictionsObj = doc.RootElement.GetProperty("predictions");
+                var firstPrediction = predictionsObj[0];
+                var embeddingsObj = firstPrediction.GetProperty("embeddings");
+                valuesObj = embeddingsObj.GetProperty("values");
+            }
+            else
+            {
+                // Google AI Studio는 embedding.values 포맷을 가집니다.
+                var embeddingObj = doc.RootElement.GetProperty("embedding");
+                valuesObj = embeddingObj.GetProperty("values");
+            }
+
+            var result = new float[valuesObj.GetArrayLength()];
+            int idx = 0;
+            foreach (var val in valuesObj.EnumerateArray())
+            {
+                result[idx++] = val.GetSingle();
+            }
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            throw new Exception($"Gemini Embedding API 호출 실패: {ex.Message}");
         }
     }
 }

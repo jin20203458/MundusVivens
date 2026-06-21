@@ -11,6 +11,7 @@ namespace MundusVivens.Prototype.Models
         public List<ChatMessage> ConversationHistory { get; } = new();
         public DateTime CreatedAt { get; } = DateTime.UtcNow;
         public DateTime LastActiveAt { get; set; } = DateTime.UtcNow;
+        public string? NpcGossipIdToShare { get; set; }
 
         public PlayerDialogueSession(string playerId, string npcId)
         {

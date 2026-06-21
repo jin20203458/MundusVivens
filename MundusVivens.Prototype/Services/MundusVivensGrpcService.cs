@@ -16,19 +16,22 @@ public class MundusVivensGrpcService : MundusVivensGrpc.MundusVivensGrpcBase
     private readonly IWorldEventBroadcaster _broadcaster;
     private readonly IPlayerDialogueManager _playerDialogueManager;
     private readonly IDailyPlanService _dailyPlanService; // 🆕 일일 스케줄 및 성찰 서비스 추가
+    private readonly IGossipEngine _gossipEngine; // 🆕 소문 엔진 추가
 
     public MundusVivensGrpcService(
         InteractionScheduler scheduler,
         Func<ConcurrentDictionary<string, AgentInstance>> agentsAccessor,
         IWorldEventBroadcaster broadcaster,
         IPlayerDialogueManager playerDialogueManager,
-        IDailyPlanService dailyPlanService)
+        IDailyPlanService dailyPlanService,
+        IGossipEngine gossipEngine)
     {
         _scheduler = scheduler;
         _agentsAccessor = agentsAccessor;
         _broadcaster = broadcaster;
         _playerDialogueManager = playerDialogueManager;
         _dailyPlanService = dailyPlanService;
+        _gossipEngine = gossipEngine;
     }
 
     public override async Task<TriggerDialogueResponse> TriggerDialogue(TriggerDialogueRequest request, ServerCallContext context)
@@ -176,6 +179,53 @@ public class MundusVivensGrpcService : MundusVivensGrpc.MundusVivensGrpcBase
         });
     }
 
+    public override Task<BatchUpdateAgentStatusResponse> BatchUpdateAgentStatus(BatchUpdateAgentStatusRequest request, ServerCallContext context)
+    {
+        var agents = _agentsAccessor();
+        int updatedCount = 0;
+
+        foreach (var agentReq in request.Agents)
+        {
+            if (!agents.TryGetValue(agentReq.AgentId, out var agent))
+            {
+                Console.WriteLine($"[Warning] BatchUpdate: ID가 '{agentReq.AgentId}'인 에이전트를 찾을 수 없어 건너뜁니다.");
+                continue;
+            }
+
+            var oldLocation = agent.Status.CurrentLocation;
+
+            // 스레드 세이프하게 상태 갱신
+            if (!string.IsNullOrWhiteSpace(agentReq.Location)) agent.Status.CurrentLocation = agentReq.Location;
+            if (!string.IsNullOrWhiteSpace(agentReq.Emotion)) agent.Status.Emotion = agentReq.Emotion;
+            if (!string.IsNullOrWhiteSpace(agentReq.Activity)) agent.Status.Activity = agentReq.Activity;
+
+            Console.WriteLine($"🔄 [gRPC-Batch] 에이전트 '{agent.Persona.Name}' 상태 업데이트: 위치={agent.Status.CurrentLocation}, 감정={agent.Status.Emotion}, 행동={agent.Status.Activity}");
+
+            // 위치가 변경되었을 경우 이동 이벤트 브로드캐스트
+            if (!string.IsNullOrWhiteSpace(agentReq.Location) && oldLocation != agentReq.Location)
+            {
+                var moveEvent = new WorldEvent
+                {
+                    Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                    Movement = new MovementEvent
+                    {
+                        AgentId = agentReq.AgentId,
+                        FromLocation = oldLocation,
+                        ToLocation = agentReq.Location
+                    }
+                };
+                _ = _broadcaster.BroadcastAsync(moveEvent);
+            }
+
+            updatedCount++;
+        }
+
+        return Task.FromResult(new BatchUpdateAgentStatusResponse
+        {
+            UpdatedCount = updatedCount
+        });
+    }
+
     public override Task<ProcessWorldTickResponse> ProcessWorldTick(ProcessWorldTickRequest request, ServerCallContext context)
     {
         Console.WriteLine($"⏱️ [gRPC] 월드 틱 진행 통보 수신: 틱 번호 {request.TickNumber}");
@@ -190,6 +240,20 @@ public class MundusVivensGrpcService : MundusVivensGrpc.MundusVivensGrpcBase
             }
         };
         _ = _broadcaster.BroadcastAsync(tickEvent);
+
+        // 🆕 소문 쇠퇴(Decay) 처리
+        try
+        {
+            var agents = _agentsAccessor();
+            foreach (var agent in agents.Values)
+            {
+                _gossipEngine.ApplyGossipDecay(agent, request.TickNumber);
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[Error] 소문 쇠퇴 처리 중 오류 발생: {ex.Message}");
+        }
 
         // 🆕 23틱 (자정 직전) 검출 시 백그라운드로 성찰 및 스케줄링 태스크 실행
         if (request.TickNumber % 24 == 23)

@@ -8,6 +8,7 @@ public class GossipItem
     public string SourceAgentId { get; set; } = string.Empty;// 최초 유포자
     public int BaseCredibility { get; set; } = 50;           // 최초 정보 신뢰도 (0 ~ 100)
     public int MutationCount { get; set; } = 0;              // 변형 횟수
+    public float[]? ContentEmbedding { get; set; }           // 🆕 임베딩 벡터 캐시
 }
 
 public class KnownGossip
@@ -19,4 +20,8 @@ public class KnownGossip
     // 🆕 소문 전파 경로 추적 필드 (4-B-6)
     public string DirectInformantAgentId { get; set; } = string.Empty; // 직전 유포자 (누가 말해주었는가)
     public List<string> PropagationPath { get; set; } = new();         // 누적 전파 경로 (A ➔ B ➔ C)
+
+    // 🆕 소문 쇠퇴 추적용 타임스탬프
+    public DateTime AcquiredAt { get; set; } = DateTime.UtcNow;        // 최초 획득 시각
+    public DateTime LastReinforcedAt { get; set; } = DateTime.UtcNow;   // 마지막 재확인 시각
 }

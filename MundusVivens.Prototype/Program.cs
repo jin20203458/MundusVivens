@@ -49,16 +49,30 @@ public class Program
 
         builder.Services.AddSingleton<IGoogleAuthService, GoogleAuthService>();
         builder.Services.AddSingleton<IGeminiApiService, GeminiApiService>();
+        builder.Services.AddSingleton<IEmbeddingCache, EmbeddingCache>();
         builder.Services.AddSingleton<IGossipEngine, GossipEngine>();
         builder.Services.AddSingleton<IDialogueOrchestrator, DialogueOrchestrator>();
         builder.Services.AddSingleton<IPlayerDialogueManager, PlayerDialogueManager>();
         builder.Services.AddSingleton<IWorldEventBroadcaster, WorldEventBroadcaster>();
         builder.Services.AddSingleton<IDailyPlanService, DailyPlanService>();
 
-        // 에이전트 인메모리 저장소
-        var initialAgents = InitializeAgents();
-        SeedGossip(initialAgents);
-        builder.Services.AddSingleton<ConcurrentDictionary<string, AgentInstance>>(initialAgents);
+        // 데이터 영속성 관련 서비스 직접 인스턴스 생성 (BuildServiceProvider 경고 제거)
+        var persistenceService = new PersistenceService();
+        var staticDataLoader = new StaticDataLoader();
+        builder.Services.AddSingleton<IPersistenceService>(persistenceService);
+        builder.Services.AddSingleton<StaticDataLoader>(staticDataLoader);
+
+        // 에이전트 인메모리 저장소 초기 로드 및 연동
+        var agentsFromDb = persistenceService.LoadAllAgents();
+        if (agentsFromDb.IsEmpty)
+        {
+            Console.WriteLine("[System] Database is empty. Loading initial static configurations...");
+            var initialAgents = staticDataLoader.LoadInitialAgents();
+            persistenceService.ResetDatabase(initialAgents.Values);
+            agentsFromDb = persistenceService.LoadAllAgents();
+        }
+
+        builder.Services.AddSingleton<ConcurrentDictionary<string, AgentInstance>>(agentsFromDb);
         builder.Services.AddSingleton<Func<ConcurrentDictionary<string, AgentInstance>>>(sp => () => sp.GetRequiredService<ConcurrentDictionary<string, AgentInstance>>());
 
         // 비동기 스케줄러 등록
@@ -67,8 +81,9 @@ public class Program
             var orchestrator = sp.GetRequiredService<IDialogueOrchestrator>();
             var accessor = sp.GetRequiredService<Func<ConcurrentDictionary<string, AgentInstance>>>();
             var broadcaster = sp.GetRequiredService<IWorldEventBroadcaster>();
+            var persistence = sp.GetRequiredService<IPersistenceService>();
             var logger = sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<InteractionScheduler>>();
-            return new InteractionScheduler(orchestrator, accessor, broadcaster, logger, maxGlobalConcurrent);
+            return new InteractionScheduler(orchestrator, accessor, broadcaster, persistence, logger, maxGlobalConcurrent);
         });
         builder.Services.AddHostedService(sp => sp.GetRequiredService<InteractionScheduler>());
 
@@ -137,30 +152,42 @@ public class Program
         });
 
         // 에이전트 강제 리셋
-        app.MapPost("/api/agents/reset", (ConcurrentDictionary<string, AgentInstance> agents) =>
-        {
-            var resetData = InitializeAgents();
-            SeedGossip(resetData);
-            
-            agents.Clear();
-            foreach (var kv in resetData)
-            {
-                agents[kv.Key] = kv.Value;
-            }
-            
-            return Results.Ok(new { Message = "시뮬레이션 인메모리 데이터가 초기 상태로 리셋되었습니다." });
-        });
-
-        // 인메모리 세션 스냅샷 파일 저장
-        app.MapPost("/api/agents/save", (ConcurrentDictionary<string, AgentInstance> agents) =>
+        app.MapPost("/api/agents/reset", (
+            ConcurrentDictionary<string, AgentInstance> agents,
+            StaticDataLoader dataLoader,
+            IPersistenceService persistence) =>
         {
             try
             {
-                var savePath = Path.Combine(Directory.GetCurrentDirectory(), "SessionDump.json");
-                var options = new JsonSerializerOptions { WriteIndented = true };
-                var json = JsonSerializer.Serialize(agents, options);
-                File.WriteAllText(savePath, json, Encoding.UTF8);
-                return Results.Ok(new { Message = $"현재 인메모리 세션이 성공적으로 저장되었습니다.", Path = savePath });
+                var resetData = dataLoader.LoadInitialAgents();
+                persistence.ResetDatabase(resetData.Values);
+                
+                agents.Clear();
+                foreach (var kv in resetData)
+                {
+                    agents[kv.Key] = kv.Value;
+                }
+                
+                return Results.Ok(new { Message = "시뮬레이션 인메모리 및 DB 데이터가 초기 정적 JSON 상태로 리셋되었습니다." });
+            }
+            catch (Exception ex)
+            {
+                return Results.InternalServerError(new { Error = ex.Message });
+            }
+        });
+
+        // 인메모리 세션 스냅샷 파일 저장
+        app.MapPost("/api/agents/save", (
+            ConcurrentDictionary<string, AgentInstance> agents,
+            IPersistenceService persistence) =>
+        {
+            try
+            {
+                foreach (var agent in agents.Values)
+                {
+                    persistence.UpsertAgent(agent);
+                }
+                return Results.Ok(new { Message = "현재 인메모리 데이터의 스냅샷이 LiteDB에 성공적으로 저장되었습니다." });
             }
             catch (Exception ex)
             {
@@ -169,28 +196,23 @@ public class Program
         });
 
         // 인메모리 세션 스냅샷 파일 로드
-        app.MapPost("/api/agents/load", (ConcurrentDictionary<string, AgentInstance> agents) =>
+        app.MapPost("/api/agents/load", (
+            ConcurrentDictionary<string, AgentInstance> agents,
+            IPersistenceService persistence) =>
         {
             try
             {
-                var savePath = Path.Combine(Directory.GetCurrentDirectory(), "SessionDump.json");
-                if (!File.Exists(savePath))
-                {
-                    return Results.NotFound(new { Message = "저장된 세션 백업 파일(SessionDump.json)을 찾을 수 없습니다." });
-                }
-
-                var json = File.ReadAllText(savePath, Encoding.UTF8);
-                var loadedAgents = JsonSerializer.Deserialize<ConcurrentDictionary<string, AgentInstance>>(json);
-                if (loadedAgents != null)
+                var loadedAgents = persistence.LoadAllAgents();
+                if (loadedAgents.Count > 0)
                 {
                     agents.Clear();
                     foreach (var kv in loadedAgents)
                     {
                         agents[kv.Key] = kv.Value;
                     }
-                    return Results.Ok(new { Message = "세션 백업 파일로부터 인메모리 데이터를 성공적으로 로드했습니다." });
+                    return Results.Ok(new { Message = "LiteDB로부터 최종 저장 상태를 성공적으로 로드했습니다." });
                 }
-                return Results.BadRequest(new { Message = "데이터 역직렬화에 실패했습니다." });
+                return Results.NotFound(new { Message = "LiteDB에 저장된 에이전트 데이터가 존재하지 않습니다." });
             }
             catch (Exception ex)
             {
@@ -288,7 +310,8 @@ public class Program
         // 소문 강제 주입
         app.MapPost("/api/gossip/inject", (
             GossipInjectRequest request,
-            ConcurrentDictionary<string, AgentInstance> agents) =>
+            ConcurrentDictionary<string, AgentInstance> agents,
+            IPersistenceService persistence) =>
         {
             if (!agents.TryGetValue(request.TargetAgentId, out var targetAgent))
             {
@@ -311,6 +334,15 @@ public class Program
                 SubjectiveBelief = 0.8,
                 HasSharedWithOthers = false
             };
+
+            try
+            {
+                persistence.UpsertAgent(targetAgent);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[GossipInject Error] Failed to save agent state to LiteDB: {ex.Message}");
+            }
 
             return Results.Ok(new { Message = $"에이전트 '{targetAgent.Persona.Name}'에게 소문 주입 완료" });
         });
@@ -426,152 +458,5 @@ public class Program
     public record SendPlayerMessageApiRequest(string SessionId, string Message);
     public record EndPlayerDialogueApiRequest(string SessionId);
 
-    private static ConcurrentDictionary<string, AgentInstance> InitializeAgents()
-    {
-        var dict = new ConcurrentDictionary<string, AgentInstance>();
 
-        // 1. 카일 (Kyle) - 성직자
-        var kyle = new AgentInstance
-        {
-            AgentId = "npc_kyle",
-            Persona = new Persona
-            {
-                Name = "카일",
-                Job = "성직자",
-                ToneStyle = "정중하고 신중하며 부드러운 경어체를 구사함",
-                Backstory = "어린 시절부터 성당에서 교육받아 깊은 신앙심을 가진 젊은 부사제입니다. 하지만 성당 내부의 야망을 숨기고 있습니다.",
-                CoreValues = "교회의 권위, 평화, 기도",
-                Extroversion = 0.4,
-                Faction = "성당 세력"
-            },
-            Status = new AgentStatus
-            {
-                CurrentLocation = "성당 (Church)",
-                Emotion = "평온함",
-                Activity = "예배 조율"
-            }
-        };
-        kyle.MemoryBox.CoreMemories.Add(new CoreFact("성당의 성수를 몰래 처분했다는 은밀한 비밀을 품고 있음", 9));
-        dict[kyle.AgentId] = kyle;
-
-        // 2. 에바 (Eva) - 바텐더
-        var eva = new AgentInstance
-        {
-            AgentId = "npc_eva",
-            Persona = new Persona
-            {
-                Name = "에바",
-                Job = "술집 바텐더",
-                ToneStyle = "쾌활하고 친근하며 반말과 친근한 경어를 혼용하여 수다스러움",
-                Backstory = "성당 옆 술집을 수년째 구동하고 있는 여성으로, 마을의 모든 소문이 그녀의 귀를 거쳐 갑니다. 이야기하는 것을 인생의 기쁨으로 여깁니다.",
-                CoreValues = "유쾌한 소통, 마을 사람들과의 친화",
-                Extroversion = 0.9,
-                Faction = "마을 주민"
-            },
-            Status = new AgentStatus
-            {
-                CurrentLocation = "술집 (Tavern)",
-                Emotion = "유쾌함",
-                Activity = "맥주컵 닦기"
-            }
-        };
-        dict[eva.AgentId] = eva;
-
-        // 3. 바르트 (Bart) - 노용병
-        var bart = new AgentInstance
-        {
-            AgentId = "npc_bart",
-            Persona = new Persona
-            {
-                Name = "바르트",
-                Job = "노용병",
-                ToneStyle = "거칠고 퉁명스러우며 직설적이고 반말 위주의 말투",
-                Backstory = "왕년의 전장을 누비던 은퇴한 늙은 전사입니다. 교회의 위선을 혐오하며, 종교인들을 믿지 않습니다.",
-                CoreValues = "명예, 자유, 의심",
-                Extroversion = 0.5,
-                Faction = "자유 용병"
-            },
-            Status = new AgentStatus
-            {
-                CurrentLocation = "술집 (Tavern)",
-                Emotion = "무덤덤함",
-                Activity = "술 마시는 중"
-            }
-        };
-        bart.MemoryBox.CoreMemories.Add(new CoreFact("과거 전쟁터에서 사제들의 배신으로 전우를 잃어 종교인을 극도로 불신함", 10));
-        dict[bart.AgentId] = bart;
-
-        // 4. 플레이어 (Player) - 특수 에이전트 (4-B-4)
-        var player = new AgentInstance
-        {
-            AgentId = "player",
-            Persona = new Persona
-            {
-                Name = "플레이어",
-                Job = "여행자",
-                ToneStyle = "자유로운 말투",
-                Backstory = "가상 세계를 탐험하며 주민들의 비밀을 파헤치는 이방인입니다.",
-                CoreValues = "호기심, 진실 규명",
-                Extroversion = 0.5,
-                Faction = "여행자"
-            },
-            Status = new AgentStatus
-            {
-                CurrentLocation = "광장 (Square)",
-                Emotion = "평온함",
-                Activity = "마을 둘러보기"
-            }
-        };
-        dict[player.AgentId] = player;
-
-        // 초기 관계 세팅
-        SetInitialRelationship(eva, "npc_bart", 20, 70);
-        SetInitialRelationship(bart, "npc_eva", 25, 75);
-
-        SetInitialRelationship(kyle, "npc_eva", 5, 50);
-        SetInitialRelationship(eva, "npc_kyle", 10, 60);
-
-        SetInitialRelationship(bart, "npc_kyle", -15, 30);
-        SetInitialRelationship(kyle, "npc_bart", 0, 50);
-
-        // 플레이어에 대한 NPC들의 초기 관계 세팅
-        SetInitialRelationship(kyle, "player", 0, 50);
-        SetInitialRelationship(eva, "player", 15, 60);
-        SetInitialRelationship(bart, "player", -5, 40);
-
-        return dict;
-    }
-
-    private static void SetInitialRelationship(AgentInstance owner, string targetId, int liking, int trust)
-    {
-        owner.RelationshipMap[targetId] = new Relationship
-        {
-            TargetAgentId = targetId,
-            Liking = liking,
-            Trust = trust
-        };
-    }
-
-    private static void SeedGossip(ConcurrentDictionary<string, AgentInstance> agents)
-    {
-        var gossip = new GossipItem
-        {
-            GossipId = "gossip_holy_water_theft",
-            Subject = "npc_kyle",
-            Content = "카일이 밤중에 성당 창고에서 귀중한 의식용 성수를 훔쳐 빼돌렸다",
-            SourceAgentId = "Player",
-            BaseCredibility = 90,
-            MutationCount = 0
-        };
-
-        agents["npc_eva"].KnownGossips[gossip.GossipId] = new KnownGossip
-        {
-            Gossip = gossip,
-            SubjectiveBelief = 0.95,
-            HasSharedWithOthers = false
-        };
-
-        Console.WriteLine($"📢 [System Info] 에바가 '{gossip.Subject}'에 관한 새로운 비밀 소문을 알게 되었습니다.");
-        Console.WriteLine($"   => 내용: \"{gossip.Content}\" (신뢰도: {gossip.BaseCredibility}%)\n");
-    }
 }

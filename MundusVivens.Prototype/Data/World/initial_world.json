@@ -1,0 +1,95 @@
+{
+  "Relationships": [
+    { "SourceAgentId": "npc_eva", "TargetAgentId": "npc_bart", "Liking": 20, "Trust": 70 },
+    { "SourceAgentId": "npc_bart", "TargetAgentId": "npc_eva", "Liking": 25, "Trust": 75 },
+    { "SourceAgentId": "npc_kyle", "TargetAgentId": "npc_eva", "Liking": 5, "Trust": 50 },
+    { "SourceAgentId": "npc_eva", "TargetAgentId": "npc_kyle", "Liking": 10, "Trust": 60 },
+    { "SourceAgentId": "npc_bart", "TargetAgentId": "npc_kyle", "Liking": -15, "Trust": 30 },
+    { "SourceAgentId": "npc_kyle", "TargetAgentId": "npc_bart", "Liking": 0, "Trust": 50 },
+    
+    { "SourceAgentId": "npc_kyle", "TargetAgentId": "npc_maya", "Liking": 40, "Trust": 70 },
+    { "SourceAgentId": "npc_maya", "TargetAgentId": "npc_kyle", "Liking": 30, "Trust": 60 },
+    
+    { "SourceAgentId": "npc_kyle", "TargetAgentId": "npc_valac", "Liking": -20, "Trust": 30 },
+    { "SourceAgentId": "npc_valac", "TargetAgentId": "npc_kyle", "Liking": 10, "Trust": 40 },
+    
+    { "SourceAgentId": "npc_bart", "TargetAgentId": "npc_hugo", "Liking": 60, "Trust": 90 },
+    { "SourceAgentId": "npc_hugo", "TargetAgentId": "npc_bart", "Liking": 65, "Trust": 85 },
+    
+    { "SourceAgentId": "npc_hugo", "TargetAgentId": "npc_lucas", "Liking": 20, "Trust": 70 },
+    { "SourceAgentId": "npc_lucas", "TargetAgentId": "npc_hugo", "Liking": 15, "Trust": 75 },
+    
+    { "SourceAgentId": "npc_lucas", "TargetAgentId": "npc_cedric", "Liking": -15, "Trust": 20 },
+    { "SourceAgentId": "npc_cedric", "TargetAgentId": "npc_lucas", "Liking": -10, "Trust": 40 },
+    
+    { "SourceAgentId": "npc_cedric", "TargetAgentId": "npc_valac", "Liking": -40, "Trust": 10 },
+    { "SourceAgentId": "npc_valac", "TargetAgentId": "npc_cedric", "Liking": 5, "Trust": 20 },
+    
+    { "SourceAgentId": "npc_lyra", "TargetAgentId": "npc_eva", "Liking": 35, "Trust": 60 },
+    { "SourceAgentId": "npc_eva", "TargetAgentId": "npc_lyra", "Liking": 40, "Trust": 55 },
+    
+    { "SourceAgentId": "npc_aileen", "TargetAgentId": "npc_kyle", "Liking": -20, "Trust": 20 },
+    { "SourceAgentId": "npc_kyle", "TargetAgentId": "npc_aileen", "Liking": 0, "Trust": 30 },
+    
+    { "SourceAgentId": "npc_kyle", "TargetAgentId": "player", "Liking": 0, "Trust": 50 },
+    { "SourceAgentId": "npc_eva", "TargetAgentId": "player", "Liking": 15, "Trust": 60 },
+    { "SourceAgentId": "npc_bart", "TargetAgentId": "player", "Liking": -5, "Trust": 40 },
+    { "SourceAgentId": "npc_maya", "TargetAgentId": "player", "Liking": 10, "Trust": 50 },
+    { "SourceAgentId": "npc_hugo", "TargetAgentId": "player", "Liking": 10, "Trust": 50 },
+    { "SourceAgentId": "npc_lucas", "TargetAgentId": "player", "Liking": 0, "Trust": 50 },
+    { "SourceAgentId": "npc_cedric", "TargetAgentId": "player", "Liking": -10, "Trust": 30 },
+    { "SourceAgentId": "npc_valac", "TargetAgentId": "player", "Liking": -5, "Trust": 30 },
+    { "SourceAgentId": "npc_aileen", "TargetAgentId": "player", "Liking": 5, "Trust": 45 },
+    { "SourceAgentId": "npc_lyra", "TargetAgentId": "player", "Liking": 20, "Trust": 50 }
+  ],
+  "SeedGossips": [
+    {
+      "Gossip": {
+        "GossipId": "gossip_holy_water_theft",
+        "Subject": "npc_kyle",
+        "Content": "카일이 밤중에 성당 창고에서 귀중한 의식용 성수를 훔쳐 빼돌렸다",
+        "SourceAgentId": "Player",
+        "BaseCredibility": 90,
+        "MutationCount": 0
+      },
+      "HolderAgentId": "npc_eva",
+      "SubjectiveBelief": 0.95
+    },
+    {
+      "Gossip": {
+        "GossipId": "gossip_cedric_debt",
+        "Subject": "npc_cedric",
+        "Content": "세드릭이 도박 빚을 갚기 위해 영주 가문의 전래 보물을 뒷골목 암시장에 팔아넘기려 한다",
+        "SourceAgentId": "Lyra",
+        "BaseCredibility": 85,
+        "MutationCount": 0
+      },
+      "HolderAgentId": "npc_lyra",
+      "SubjectiveBelief": 0.90
+    },
+    {
+      "Gossip": {
+        "GossipId": "gossip_orphanage_embezzle",
+        "Subject": "npc_kyle",
+        "Content": "성당 고위 사제들이 고아원 기부금을 유용하여 영주 측에 뇌물을 바치고 있다",
+        "SourceAgentId": "Maya",
+        "BaseCredibility": 80,
+        "MutationCount": 0
+      },
+      "HolderAgentId": "npc_maya",
+      "SubjectiveBelief": 0.95
+    },
+    {
+      "Gossip": {
+        "GossipId": "gossip_alchemist_secret",
+        "Subject": "npc_aileen",
+        "Content": "연금술사 에일린이 성당 몰래 타인의 정신을 조종할 수 있는 신비한 최면 비약을 개발 중이다",
+        "SourceAgentId": "Hugo",
+        "BaseCredibility": 75,
+        "MutationCount": 0
+      },
+      "HolderAgentId": "npc_hugo",
+      "SubjectiveBelief": 0.85
+    }
+  ]
+}

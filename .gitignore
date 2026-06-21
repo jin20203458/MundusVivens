@@ -38,3 +38,6 @@ Thumbs.db
 **/*.obj
 **/*.lib
 **/*.dll
+
+# LiteDB database files
+**/Data/Save/

@@ -24,6 +24,9 @@ namespace MundusVivens.Prototype.Services
         private readonly IWorldEventBroadcaster _broadcaster;
         private readonly MemoryEventLogger _memoryLogger;
         private readonly Func<ConcurrentDictionary<string, AgentInstance>> _agentsAccessor;
+        private readonly IEmbeddingCache _embeddingCache;
+
+        private readonly IPersistenceService _persistence;
 
         private readonly ConcurrentDictionary<string, PlayerDialogueSession> _activeSessions = new();
 
@@ -32,13 +35,17 @@ namespace MundusVivens.Prototype.Services
             IGossipEngine gossipEngine,
             IWorldEventBroadcaster broadcaster,
             MemoryEventLogger memoryLogger,
-            Func<ConcurrentDictionary<string, AgentInstance>> agentsAccessor)
+            Func<ConcurrentDictionary<string, AgentInstance>> agentsAccessor,
+            IEmbeddingCache embeddingCache,
+            IPersistenceService persistence)
         {
             _apiService = apiService;
             _gossipEngine = gossipEngine;
             _broadcaster = broadcaster;
             _memoryLogger = memoryLogger;
             _agentsAccessor = agentsAccessor;
+            _embeddingCache = embeddingCache;
+            _persistence = persistence;
         }
 
         public async Task<(bool Success, string Message, string SessionId, string Greeting)> StartDialogueAsync(string playerId, string npcId, CancellationToken cancellationToken = default)
@@ -100,14 +107,27 @@ namespace MundusVivens.Prototype.Services
                 relevantMemoriesStr = "플레이어에 대한 특별한 과거 기억이 없습니다.";
             }
 
-            // 소문 공유 확인
-            var gossipToShare = _gossipEngine.SelectGossipToShare(npc, player);
+            // Top-K 기억을 먼저 확정한 뒤, 그 안에서 전파 소문을 선택
+            var sortedGossips = ComputeTopKGossips(npc, player);
+
+            // 소문 공유 확인 (기억 안에서 선택)
+            var gossipToShare = _gossipEngine.SelectGossipToShare(npc, player, sortedGossips);
+            session.NpcGossipIdToShare = gossipToShare?.Gossip.GossipId;
+
             string gossipSnippet = "없음 (평범하게 첫 인사를 건네십시오)";
             if (gossipToShare != null)
             {
                 gossipSnippet = $"[비밀 소문 폭로 지시] 대상: {gossipToShare.Gossip.Subject}, 소문 내용: \"{gossipToShare.Gossip.Content}\"\n" +
                     "지시: 첫 인사 대화 중 자연스럽게 플레이어에게 이 소문을 흘리거나 질문해 보십시오. (예: '마침 잘 왔군, 혹시 카일 소식 들었나?') 소문의 대상 인물 실명을 언급하십시오.";
             }
+
+            string knownGossipsStr = string.Join("\n", sortedGossips.Select(kg => $"- {kg.Gossip.Content} (확신도: {kg.SubjectiveBelief:F2})"));
+            if (string.IsNullOrWhiteSpace(knownGossipsStr))
+            {
+                knownGossipsStr = "알고 있는 특별한 소문이 없습니다.";
+            }
+
+            Console.WriteLine($"📋 [소문 압축] {npc.Persona.Name}: {npc.KnownGossips.Count} -> {sortedGossips.Count}개 선별 (플레이어 대화 시작)");
 
             string systemPrompt = $@"당신은 가상 세계 시뮬레이션의 NPC [{npc.Persona.Name}]입니다. 주어진 페르소나와 대화 상대에 대한 기억을 바탕으로 첫 대면 인사를 건네십시오.
  
@@ -120,6 +140,9 @@ namespace MundusVivens.Prototype.Services
 [대화 상대방 정보]
 - 이름/직업: {player.Persona.Name} / {player.Persona.Job}
 - 상대에 대한 나의 태도: 호감도 {rel.Liking}/100, 신뢰도 {rel.Trust}/100
+
+[내가 알고 있는 소문 목록 (최대 3개 선별)]
+{knownGossipsStr}
 
 [기억 및 상황 맥락]
 <relevant_memories>
@@ -185,14 +208,30 @@ namespace MundusVivens.Prototype.Services
                 relevantMemoriesStr = "플레이어에 대한 특별한 과거 기억이 없습니다.";
             }
 
-            // 소문 공유 확인
-            var gossipToShare = _gossipEngine.SelectGossipToShare(npc, player);
+            // Top-K 기억 확정 후 그 안에서 전파 소문 선택
+            var sortedGossips = ComputeTopKGossips(npc, player);
+
+            // 소문 공유 확인 (세션 시작 시 선택된 소문 유지)
+            KnownGossip? gossipToShare = null;
+            if (!string.IsNullOrWhiteSpace(session.NpcGossipIdToShare))
+            {
+                npc.KnownGossips.TryGetValue(session.NpcGossipIdToShare, out gossipToShare);
+            }
+
             string gossipSnippet = "없음 (플레이어의 질문에 성실히 대답하십시오)";
             if (gossipToShare != null)
             {
                 gossipSnippet = $"[비밀 소문 폭로 지시] 대상: {gossipToShare.Gossip.Subject}, 소문 내용: \"{gossipToShare.Gossip.Content}\"\n" +
                     "지시: 기회가 된다면 대화 흐름 중 자연스럽게 플레이어에게 이 소문을 흘리십시오. 소문의 대상 인물 실명을 언급하십시오.";
             }
+
+            string knownGossipsStr = string.Join("\n", sortedGossips.Select(kg => $"- {kg.Gossip.Content} (확신도: {kg.SubjectiveBelief:F2})"));
+            if (string.IsNullOrWhiteSpace(knownGossipsStr))
+            {
+                knownGossipsStr = "알고 있는 특별한 소문이 없습니다.";
+            }
+
+            Console.WriteLine($"📋 [소문 압축] {npc.Persona.Name}: {npc.KnownGossips.Count} -> {sortedGossips.Count}개 선별 (플레이어 메시지 전송)");
 
             string systemPrompt = $@"당신은 가상 세계 시뮬레이션의 NPC [{npc.Persona.Name}]입니다. 주어진 페르소나와 대화 상대에 대한 기억, 그리고 대화 내역을 바탕으로 답변을 완성하십시오.
  
@@ -205,6 +244,9 @@ namespace MundusVivens.Prototype.Services
 [대화 상대방 정보]
 - 이름/직업: {player.Persona.Name} / {player.Persona.Job}
 - 상대에 대한 나의 태도: 호감도 {rel.Liking}/100, 신뢰도 {rel.Trust}/100
+
+[내가 알고 있는 소문 목록 (최대 3개 선별)]
+{knownGossipsStr}
 
 [기억 및 상황 맥락]
 <relevant_memories>
@@ -402,10 +444,50 @@ namespace MundusVivens.Prototype.Services
                             }
                         }
 
+                        // Tier 2: LLM의 ID 매칭 실패 시, 이번 대화 시작 시 공유하기로 지정되었던 소문과 비교
+                        if (originalGossip == null && speaker.AgentId == npc.AgentId && !string.IsNullOrWhiteSpace(session.NpcGossipIdToShare))
+                        {
+                            if (npc.KnownGossips.TryGetValue(session.NpcGossipIdToShare, out var targetGossipToShare) && targetGossipToShare.Gossip.Subject == subject)
+                            {
+                                originalGossip = targetGossipToShare.Gossip;
+                            }
+                        }
+
+                        // Tier 3 (신규): 임베딩 유사도 기반 매칭
                         if (originalGossip == null)
                         {
-                            originalGossip = speaker.KnownGossips.Values.FirstOrDefault(kg => kg.Gossip.Subject == subject)?.Gossip;
+                            var candidates = speaker.KnownGossips.Values
+                                .Where(kg => kg.Gossip.Subject == subject)
+                                .ToList();
+
+                            double maxSim = 0;
+                            GossipItem? bestMatch = null;
+
+                            var contentEmbedding = await _embeddingCache.GetOrComputeEmbeddingAsync(content, async t => await _apiService.GetEmbeddingAsync(t));
+
+                            foreach (var cand in candidates)
+                            {
+                                if (cand.Gossip.ContentEmbedding == null)
+                                {
+                                    cand.Gossip.ContentEmbedding = await _embeddingCache.GetOrComputeEmbeddingAsync(cand.Gossip.Content, async t => await _apiService.GetEmbeddingAsync(t));
+                                }
+
+                                double sim = EmbeddingCache.CosineSimilarity(contentEmbedding, cand.Gossip.ContentEmbedding);
+                                if (sim > maxSim)
+                                {
+                                    maxSim = sim;
+                                    bestMatch = cand.Gossip;
+                                }
+                            }
+
+                            if (maxSim >= 0.82 && bestMatch != null)
+                            {
+                                originalGossip = bestMatch;
+                                Console.WriteLine($"[PlayerDialogueManager] 🧬 [임베딩 매칭 성공] 추출된 소문과 화자의 기존 소문 유사도 {maxSim:F3} 매칭 성공 (ID: {originalGossip.GossipId})");
+                            }
                         }
+
+
 
                         if (originalGossip == null)
                         {
@@ -425,7 +507,7 @@ namespace MundusVivens.Prototype.Services
                             };
                         }
 
-                        _gossipEngine.ProcessGossipSharing(speaker, listener, originalGossip, content);
+                        await _gossipEngine.ProcessGossipSharingAsync(speaker, listener, originalGossip, content);
 
                         // 소문 전파 실시간 이벤트 브로드캐스트
                         bool isMutated = !originalGossip.Content.Trim().Equals(content.Trim(), StringComparison.OrdinalIgnoreCase);
@@ -493,6 +575,20 @@ namespace MundusVivens.Prototype.Services
             player.Status.Activity = "마을 둘러보기";
             npc.Status.Activity = "대기 중";
 
+            // DB에 에이전트 상태 비동기 영구 저장 (Write-Behind)
+            _ = Task.Run(() =>
+            {
+                try
+                {
+                    _persistence.UpsertAgent(player);
+                    _persistence.UpsertAgent(npc);
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[PlayerDialogueManager DB Error] Failed to async save agents: {ex.Message}");
+                }
+            });
+
             return (true, summary);
         }
 
@@ -504,6 +600,43 @@ namespace MundusVivens.Prototype.Services
                 agent.RelationshipMap[targetId] = rel;
             }
             return rel;
+        }
+
+        /// <summary>
+        /// 관계 감정, 와전 자극도, 미전파 우선순위를 반영한 Top-K 소문 기억 선별 헬퍼.
+        /// DialogueOrchestrator의 ComputeTopKGossips와 동일한 점수 공식을 사용합니다.
+        /// </summary>
+        private List<KnownGossip> ComputeTopKGossips(AgentInstance speaker, AgentInstance listener, int k = 3)
+        {
+            return speaker.KnownGossips.Values
+                .Select(kg => {
+                    double score = kg.SubjectiveBelief; // 기본 확신도 (0.0 ~ 1.0)
+
+                    // 당사자 인식 가중치: 대화 상대에 대한 소문을 살짝 의식 (+0.15)
+                    if (kg.Gossip.Subject == listener.AgentId)
+                        score += 0.15;
+
+                    // 미전파 소문 가중치: 아직 남에게 말하지 않은 따끈한 소문 우선 (+0.25)
+                    if (!kg.HasSharedWithOthers)
+                        score += 0.25;
+
+                    // 감정 연동 가중치: 소문 대상에 대한 감정이 강할수록 기억에 잘 남음 (max +0.4)
+                    if (speaker.RelationshipMap.TryGetValue(kg.Gossip.Subject, out var subjectRel))
+                        score += Math.Min(Math.Abs(subjectRel.Liking) / 250.0, 0.4);
+
+                    // 와전 자극도 가중치: 여러 입을 거친 자극적 소문이 더 기억에 남음 (max +0.25)
+                    score += Math.Min(kg.Gossip.MutationCount * 0.08, 0.25);
+
+                    // 시간 신선도 가중치: 최근에 들은 소문이 더 잘 떠오름 (max +0.2)
+                    double secondsSinceAcquired = (DateTime.UtcNow - kg.AcquiredAt).TotalSeconds;
+                    score += Math.Max(0.0, (1.0 - secondsSinceAcquired / 1000.0) * 0.2);
+
+                    return new { Gossip = kg, Score = score };
+                })
+                .OrderByDescending(x => x.Score)
+                .Take(k)
+                .Select(x => x.Gossip)
+                .ToList();
         }
 
         private string CleanResponse(string response)

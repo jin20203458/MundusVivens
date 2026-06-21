@@ -30,17 +30,20 @@ public class DialogueOrchestrator : IDialogueOrchestrator
     private readonly IGossipEngine _gossipEngine;
     private readonly MemoryEventLogger _memoryLogger;
     private readonly IWorldEventBroadcaster _broadcaster;
+    private readonly IEmbeddingCache _embeddingCache;
 
     public DialogueOrchestrator(
         IGeminiApiService apiService,
         IGossipEngine gossipEngine,
         MemoryEventLogger memoryLogger,
-        IWorldEventBroadcaster broadcaster)
+        IWorldEventBroadcaster broadcaster,
+        IEmbeddingCache embeddingCache)
     {
         _apiService = apiService;
         _gossipEngine = gossipEngine;
         _memoryLogger = memoryLogger;
         _broadcaster = broadcaster;
+        _embeddingCache = embeddingCache;
     }
 
     public async Task<DialogueResult> RunConversationAsync(AgentInstance agentA, AgentInstance agentB, string taskId = "", CancellationToken cancellationToken = default)
@@ -55,8 +58,15 @@ public class DialogueOrchestrator : IDialogueOrchestrator
         Console.WriteLine($"   * {agentB.Persona.Name}의 태도: 호감도 {relBToA.Liking}, 신뢰도 {relBToA.Trust}");
         Console.WriteLine($"=======================================================\n");
 
-        var gossipToShareByA = _gossipEngine.SelectGossipToShare(agentA, agentB);
-        var gossipToShareByB = _gossipEngine.SelectGossipToShare(agentB, agentA);
+        // Top-K 기억을 먼저 확정한 뒤, 그 안에서 전파 소문을 선택
+        var topKForA = ComputeTopKGossips(agentA, agentB);
+        var topKForB = ComputeTopKGossips(agentB, agentA);
+
+        var gossipToShareByA = _gossipEngine.SelectGossipToShare(agentA, agentB, topKForA);
+        var gossipToShareByB = _gossipEngine.SelectGossipToShare(agentB, agentA, topKForB);
+
+        Console.WriteLine($"📋 [소문 압축] {agentA.Persona.Name}: {agentA.KnownGossips.Count} -> {topKForA.Count}개 선별");
+        Console.WriteLine($"📋 [소문 압축] {agentB.Persona.Name}: {agentB.KnownGossips.Count} -> {topKForB.Count}개 선별");
 
         agentA.MemoryBox.ActiveConversation.Clear();
         agentB.MemoryBox.ActiveConversation.Clear();
@@ -96,6 +106,23 @@ public class DialogueOrchestrator : IDialogueOrchestrator
                     "지시: 대화 흐름 중 상대방에게 이 소문을 소문의 대상 실명을 직접 언급하며 자연스럽게 흘리거나 폭로하십시오. 반드시 해당 인물의 행동을 이야기해야 합니다.";
             }
 
+            // 사전 계산된 Top-K 기억 목록 사용
+            var sortedGossips = currentSpeaker == agentA ? topKForA : topKForB;
+
+            string knownGossipsStr = string.Join("\n", sortedGossips.Select(kg => $"- {kg.Gossip.Content} (확신도: {kg.SubjectiveBelief:F2})"));
+            if (string.IsNullOrWhiteSpace(knownGossipsStr))
+            {
+                knownGossipsStr = "알고 있는 특별한 소문이 없습니다.";
+            }
+
+            string reIgnitionPrompt = "";
+            if (rel.Liking <= -15)
+            {
+                reIgnitionPrompt = "\n[🚨 감정 재점화(Emotion Re-ignition) 경보]\n" +
+                    "- 이 캐릭터는 당신에게 해를 입혔거나 적대 관계입니다. 비록 현재 당신의 표면적 감정 상태가 '평온함' 등 차분하더라도, 대화가 시작되면 과거의 원한, 갈등, 앙금이 마음 깊은 곳에서 재점화되어야 합니다.\n" +
+                    "- 따라서 대화에서 과거에 있었던 분쟁이나 마음에 들지 않았던 일화를 직접 들춰내며 쌀쌀맞고 까칠한 태도(분노, 의심, 경계)로 대화를 시작하거나 리드하십시오.\n";
+            }
+
             string systemPrompt = $@"당신은 가상 세계 시뮬레이션의 NPC [{currentSpeaker.Persona.Name}]입니다. 주어진 페르소나와 상대방에 대한 기억을 바탕으로 대답하십시오.
 
 [내 페르소나]
@@ -108,6 +135,9 @@ public class DialogueOrchestrator : IDialogueOrchestrator
 - 이름/직업: {currentListener.Persona.Name} / {currentListener.Persona.Job}
 - 상대에 대한 나의 태도: 호감도 {rel.Liking}/100, 신뢰도 {rel.Trust}/100
 
+[내가 알고 있는 소문 목록 (최대 3개 선별)]
+{knownGossipsStr}
+
 [기억 및 상황 맥락]
 <relevant_memories>
 {relevantMemoriesStr}
@@ -119,6 +149,7 @@ public class DialogueOrchestrator : IDialogueOrchestrator
 - 나의 행동 상태: {currentSpeaker.Status.Activity}
 - 추가 화두: {gossipSnippet}
 </current_situation>
+{reIgnitionPrompt}
 
 [대화 규칙]
 1. AI 메타성 해설이나 지문, 상황 설명을 절대 적지 마십시오. 오직 대사만 출력하십시오.
@@ -405,12 +436,41 @@ public class DialogueOrchestrator : IDialogueOrchestrator
                         }
                     }
 
-                    // Tier 3: 여전히 매칭 실패 시, subject 기반의 fallback 검색 (동일인에 대한 소문이 1개뿐이거나 구형 로직 지원용)
+                    // Tier 3 (신규): 임베딩 유사도 기반 매칭 (ID가 다르게 생성되거나 누락되었을 때, 유사성 평가로 매칭)
                     if (originalGossip == null)
                     {
-                        originalGossip = speaker.KnownGossips.Values
-                            .FirstOrDefault(kg => kg.Gossip.Subject == subject)?.Gossip;
+                        var candidates = speaker.KnownGossips.Values
+                            .Where(kg => kg.Gossip.Subject == subject)
+                            .ToList();
+
+                        double maxSim = 0;
+                        GossipItem? bestMatch = null;
+
+                        var contentEmbedding = await _embeddingCache.GetOrComputeEmbeddingAsync(content, async t => await _apiService.GetEmbeddingAsync(t));
+
+                        foreach (var cand in candidates)
+                        {
+                            if (cand.Gossip.ContentEmbedding == null)
+                            {
+                                cand.Gossip.ContentEmbedding = await _embeddingCache.GetOrComputeEmbeddingAsync(cand.Gossip.Content, async t => await _apiService.GetEmbeddingAsync(t));
+                            }
+
+                            double sim = EmbeddingCache.CosineSimilarity(contentEmbedding, cand.Gossip.ContentEmbedding);
+                            if (sim > maxSim)
+                            {
+                                maxSim = sim;
+                                bestMatch = cand.Gossip;
+                            }
+                        }
+
+                        if (maxSim >= 0.82 && bestMatch != null)
+                        {
+                            originalGossip = bestMatch;
+                            Console.WriteLine($"[DialogueOrchestrator] 🧬 [임베딩 매칭 성공] 추출된 소문과 화자의 기존 소문 유사도 {maxSim:F3} 매칭 성공 (ID: {originalGossip.GossipId})");
+                        }
                     }
+
+
 
                     if (originalGossip == null)
                     {
@@ -431,7 +491,7 @@ public class DialogueOrchestrator : IDialogueOrchestrator
                         };
                     }
 
-                    _gossipEngine.ProcessGossipSharing(speaker, listener, originalGossip, content);
+                    await _gossipEngine.ProcessGossipSharingAsync(speaker, listener, originalGossip, content);
 
                     // 소문 전파 실시간 이벤트 브로드캐스트
                     bool isMutated = !originalGossip.Content.Trim().Equals(content.Trim(), StringComparison.OrdinalIgnoreCase);
@@ -528,6 +588,42 @@ public class DialogueOrchestrator : IDialogueOrchestrator
             agent.RelationshipMap[targetId] = rel;
         }
         return rel;
+    }
+
+    /// <summary>
+    /// 관계 감정, 와전 자극도, 미전파 우선순위를 반영한 Top-K 소문 기억 선별 헬퍼.
+    /// </summary>
+    private List<KnownGossip> ComputeTopKGossips(AgentInstance speaker, AgentInstance listener, int k = 3)
+    {
+        return speaker.KnownGossips.Values
+            .Select(kg => {
+                double score = kg.SubjectiveBelief; // 기본 확신도 (0.0 ~ 1.0)
+
+                // 당사자 인식 가중치: 대화 상대에 대한 소문을 살짝 의식 (+0.15)
+                if (kg.Gossip.Subject == listener.AgentId)
+                    score += 0.15;
+
+                // 미전파 소문 가중치: 아직 남에게 말하지 않은 따끈한 소문 우선 (+0.25)
+                if (!kg.HasSharedWithOthers)
+                    score += 0.25;
+
+                // 감정 연동 가중치: 소문 대상에 대한 감정이 강할수록 기억에 잘 남음 (max +0.4)
+                if (speaker.RelationshipMap.TryGetValue(kg.Gossip.Subject, out var subjectRel))
+                    score += Math.Min(Math.Abs(subjectRel.Liking) / 250.0, 0.4);
+
+                // 와전 자극도 가중치: 여러 입을 거친 자극적 소문이 더 기억에 남음 (max +0.25)
+                score += Math.Min(kg.Gossip.MutationCount * 0.08, 0.25);
+
+                // 시간 신선도 가중치: 최근에 들은 소문이 더 잘 떠오름 (max +0.2)
+                double secondsSinceAcquired = (DateTime.UtcNow - kg.AcquiredAt).TotalSeconds;
+                score += Math.Max(0.0, (1.0 - secondsSinceAcquired / 1000.0) * 0.2);
+
+                return new { Gossip = kg, Score = score };
+            })
+            .OrderByDescending(x => x.Score)
+            .Take(k)
+            .Select(x => x.Gossip)
+            .ToList();
     }
 
     private string CleanResponse(string response)

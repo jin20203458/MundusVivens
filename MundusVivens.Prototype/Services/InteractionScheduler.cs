@@ -47,6 +47,7 @@ public class InteractionScheduler : BackgroundService
     private readonly IDialogueOrchestrator _orchestrator;
     private readonly Func<ConcurrentDictionary<string, AgentInstance>> _agentsAccessor;
     private readonly IWorldEventBroadcaster _broadcaster;
+    private readonly IPersistenceService _persistence;
     private readonly ILogger<InteractionScheduler> _logger;
     private readonly object _lock = new();
     private readonly ConcurrentDictionary<string, (DialogueSchedulerResult Result, DateTime CompletedAt)> _completedResults = new();
@@ -55,12 +56,14 @@ public class InteractionScheduler : BackgroundService
         IDialogueOrchestrator orchestrator,
         Func<ConcurrentDictionary<string, AgentInstance>> agentsAccessor,
         IWorldEventBroadcaster broadcaster,
+        IPersistenceService persistence,
         ILogger<InteractionScheduler> logger,
         int maxGlobalConcurrent = 2)
     {
         _orchestrator = orchestrator;
         _agentsAccessor = agentsAccessor;
         _broadcaster = broadcaster;
+        _persistence = persistence;
         _logger = logger;
         _globalSemaphore = new SemaphoreSlim(maxGlobalConcurrent);
 
@@ -279,6 +282,17 @@ public class InteractionScheduler : BackgroundService
                             agentB.Status.IsInConversation = false;
                             agentA.Status.Activity = "대기 중";
                             agentB.Status.Activity = "대기 중";
+
+                            try
+                            {
+                                // DB에 에이전트 상태 비동기 영구 저장 (Write-Behind)
+                                _persistence.UpsertAgent(agentA);
+                                _persistence.UpsertAgent(agentB);
+                            }
+                            catch (Exception ex)
+                            {
+                                _logger.LogError(ex, $"[Scheduler] DB 저장 중 에러 발생: {agentA.AgentId}, {agentB.AgentId}");
+                            }
 
                             _globalSemaphore.Release();
                             _logger.LogInformation($"[Scheduler] 대화 실행 완료 및 락 해제: Job {job.JobId}");
