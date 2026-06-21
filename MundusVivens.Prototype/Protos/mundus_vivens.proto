@@ -88,6 +88,7 @@ message ProcessWorldTickRequest {
 message ProcessWorldTickResponse {
   bool success = 1;
   string message = 2;
+  repeated string busy_agent_ids = 3;
 }
 
 message DialogueLine {

@@ -15,6 +15,7 @@ namespace MundusVivens.Prototype.Services
         Task<(bool Success, string Message, string SessionId, string Greeting)> StartDialogueAsync(string playerId, string npcId, CancellationToken cancellationToken = default);
         Task<string> SendMessageAsync(string sessionId, string messageText, CancellationToken cancellationToken = default);
         Task<(bool Success, string Summary)> EndDialogueAsync(string sessionId, CancellationToken cancellationToken = default);
+        Task CleanupIdleSessionsAsync(TimeSpan idleTimeout, CancellationToken cancellationToken = default);
     }
 
     public class PlayerDialogueManager : IPlayerDialogueManager
@@ -637,6 +638,27 @@ namespace MundusVivens.Prototype.Services
                 .Take(k)
                 .Select(x => x.Gossip)
                 .ToList();
+        }
+
+        public async Task CleanupIdleSessionsAsync(TimeSpan idleTimeout, CancellationToken cancellationToken = default)
+        {
+            var now = DateTime.UtcNow;
+            var idleSessions = _activeSessions.Values
+                .Where(s => now - s.LastActiveAt > idleTimeout)
+                .ToList();
+
+            foreach (var session in idleSessions)
+            {
+                try
+                {
+                    Console.WriteLine($"[PlayerDialogueManager] Cleaning up idle session {session.SessionId} (Inactive since {session.LastActiveAt:u})");
+                    await EndDialogueAsync(session.SessionId, cancellationToken);
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[PlayerDialogueManager Error] Failed to cleanup idle session {session.SessionId}: {ex.Message}");
+                }
+            }
         }
 
         private string CleanResponse(string response)

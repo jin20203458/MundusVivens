@@ -254,7 +254,7 @@
             box-shadow: 0 0 12px rgba(0, 240, 255, 0.35);
         }
 
-        /* Center Panel - Map & Speech Bubbles */
+                /* Center Panel - Map & Speech Bubbles */
         .center-panel {
             display: flex;
             flex-direction: column;
@@ -268,97 +268,115 @@
             background: radial-gradient(circle at center, #111827 0%, #030712 100%);
             border-radius: 12px;
             border: 1px solid var(--border-color);
-            display: grid;
-            grid-template-columns: repeat(3, 1fr);
-            gap: 20px;
-            padding: 24px;
-            min-height: 380px;
-            align-items: center;
+            min-height: 580px;
+            overflow: hidden;
+            background-image: 
+                radial-gradient(rgba(0, 240, 255, 0.04) 1px, transparent 0),
+                radial-gradient(rgba(0, 240, 255, 0.04) 1px, transparent 0);
+            background-size: 20px 20px;
+            background-position: 0 0, 10px 10px;
         }
 
         .location-node {
-            height: 100%;
-            min-height: 300px;
+            position: absolute;
+            width: 150px;
+            height: 70px;
+            transform: translate(-50%, -50%);
             border-radius: 10px;
             border: 1px dashed rgba(255, 255, 255, 0.1);
-            background: rgba(17, 24, 39, 0.4);
+            background: rgba(21, 27, 43, 0.7);
             display: flex;
             flex-direction: column;
-            position: relative;
-            padding: 16px;
+            justify-content: center;
+            align-items: center;
+            padding: 8px;
             transition: all 0.3s ease;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.25);
+            z-index: 1;
         }
 
         .location-node:hover {
-            background: rgba(17, 24, 39, 0.6);
-            border-color: rgba(255, 255, 255, 0.2);
+            border-color: var(--accent-color, var(--accent-cyan));
+            box-shadow: 0 0 12px rgba(0, 240, 255, 0.15);
+            background: rgba(21, 27, 43, 0.9);
         }
 
         .location-header {
-            font-size: 15px;
+            font-size: 12px;
             font-weight: 700;
-            margin-bottom: 16px;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            letter-spacing: -0.2px;
+            text-align: center;
+            width: 100%;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
         }
 
-        .location-badge-container {
+        /* NPC Map Avatar (Walking) */
+        .map-npc-avatar {
+            position: absolute;
+            transform: translate(-50%, -50%);
+            width: 38px;
+            height: 38px;
+            border-radius: 50%;
+            background: #111827;
+            border: 2px solid var(--accent-color, var(--accent-cyan));
             display: flex;
-            flex-direction: column;
-            gap: 12px;
-            flex: 1;
             justify-content: center;
             align-items: center;
-            position: relative;
-        }
-
-        /* NPC Map Badge */
-        .map-npc-badge {
-            background: var(--card-bg);
-            border: 1px solid var(--accent-color, var(--accent-cyan));
-            border-radius: 8px;
-            padding: 8px 14px;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            position: relative;
-            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.4);
-            transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-            animation: badge-enter 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
-            z-index: 5;
+            font-size: 18px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.6);
             cursor: pointer;
+            z-index: 5;
+            pointer-events: auto;
+            transition: left 2.5s cubic-bezier(0.25, 1, 0.5, 1), 
+                        top 2.5s cubic-bezier(0.25, 1, 0.5, 1),
+                        transform 0.2s, 
+                        box-shadow 0.3s;
         }
 
-        .map-npc-badge:hover {
-            transform: scale(1.05);
+        .map-npc-avatar:hover {
+            transform: translate(-50%, -50%) scale(1.15);
             box-shadow: 0 0 15px var(--accent-color, var(--accent-cyan));
-            background: rgba(45, 55, 80, 0.8);
+            z-index: 10;
         }
 
-        @keyframes badge-enter {
-            from {
-                opacity: 0;
-                transform: translateY(15px) scale(0.9);
+        .map-npc-avatar.walking {
+            animation: walking-bob 0.5s infinite alternate ease-in-out;
+        }
+
+        @keyframes walking-bob {
+            0% {
+                margin-top: -3px;
+                transform: translate(-50%, -50%) rotate(-5deg);
             }
-            to {
-                opacity: 1;
-                transform: translateY(0) scale(1);
+            100% {
+                margin-top: 3px;
+                transform: translate(-50%, -50%) rotate(5deg);
             }
         }
 
-        .map-npc-dot {
-            width: 8px;
-            height: 8px;
-            background: var(--accent-color, var(--accent-cyan));
-            border-radius: 50%;
-            box-shadow: 0 0 8px var(--accent-color, var(--accent-cyan));
-        }
-
-        .map-npc-name {
-            font-size: 13px;
+        /* NPC Avatar Label (under avatar, hidden by default, shown on hover) */
+        .map-npc-avatar-label {
+            position: absolute;
+            bottom: -22px;
+            left: 50%;
+            transform: translateX(-50%) scale(0);
+            background: rgba(10, 15, 30, 0.95);
+            color: var(--text-primary);
+            font-size: 11px;
             font-weight: 600;
+            padding: 2px 6px;
+            border-radius: 4px;
+            white-space: nowrap;
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.6);
+            pointer-events: none;
+            transition: transform 0.15s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            z-index: 100;
+        }
+
+        .map-npc-avatar:hover .map-npc-avatar-label {
+            transform: translateX(-50%) scale(1);
         }
 
         /* Floating Speech Bubble */
@@ -530,12 +548,112 @@
         }
 
         .chat-box {
-            width: 600px;
-            height: 500px;
+            width: 800px;
+            max-width: 95vw;
+            height: 520px;
             display: flex;
             flex-direction: column;
             overflow: hidden;
             animation: modal-zoom 0.3s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+        }
+
+        .chat-body-wrapper {
+            display: flex;
+            flex: 1;
+            overflow: hidden;
+        }
+
+        .chat-main {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .chat-info-panel {
+            width: 280px;
+            border-left: 1px solid var(--border-color);
+            background: rgba(5, 7, 12, 0.25);
+            padding: 16px;
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+            overflow-y: auto;
+        }
+
+        .modal-profile-header {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding-bottom: 12px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        .modal-profile-avatar {
+            width: 50px;
+            height: 50px;
+            border-radius: 50%;
+            background: rgba(15, 23, 42, 0.8);
+            border: 2px solid var(--profile-color, var(--accent-cyan));
+            box-shadow: 0 0 10px var(--profile-color, var(--accent-cyan));
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 24px;
+        }
+
+        .modal-profile-details {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .modal-profile-name {
+            font-size: 16px;
+            font-weight: 700;
+        }
+
+        .modal-profile-job {
+            font-size: 11px;
+            color: var(--text-secondary);
+        }
+
+        .modal-npc-status-box {
+            background: rgba(30, 38, 58, 0.3);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            border-radius: 8px;
+            padding: 12px;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .modal-status-item {
+            display: flex;
+            justify-content: space-between;
+            font-size: 12px;
+        }
+
+        .modal-status-label {
+            color: var(--text-secondary);
+        }
+
+        .modal-status-value {
+            font-weight: 500;
+            color: var(--text-primary);
+        }
+
+        .modal-relations-section {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .modal-relations-title {
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--accent-cyan);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
         }
 
         @keyframes modal-zoom {
@@ -741,23 +859,48 @@
         <!-- Center Panel: Map & Status -->
         <div class="center-panel">
             <div class="map-wrapper" id="townMap">
-                <!-- Location: Church -->
-                <div class="location-node" id="loc_Church" style="--accent-color: #A78BFA;">
-                    <div class="location-header" style="color: #A78BFA;">⛪ 성당 (Church)</div>
-                    <div class="location-badge-container" id="badges_Church"></div>
+                <!-- Location: Manor -->
+                <div class="location-node" id="loc_Manor" style="--accent-color: #E2E8F0; left: 15%; top: 20%;">
+                    <div class="location-header" style="color: #E2E8F0;">🏰 영주 저택 (Manor)</div>
                 </div>
 
-                <!-- Location: Tavern -->
-                <div class="location-node" id="loc_Tavern" style="--accent-color: #FBBF24;">
-                    <div class="location-header" style="color: #FBBF24;">🍺 술집 (Tavern)</div>
-                    <div class="location-badge-container" id="badges_Tavern"></div>
+                <!-- Location: Church -->
+                <div class="location-node" id="loc_Church" style="--accent-color: #A78BFA; left: 50%; top: 20%;">
+                    <div class="location-header" style="color: #A78BFA;">⛪ 성당 (Church)</div>
+                </div>
+
+                <!-- Location: Guard Post -->
+                <div class="location-node" id="loc_GuardPost" style="--accent-color: #F87171; left: 85%; top: 20%;">
+                    <div class="location-header" style="color: #F87171;">⚔️ 경비 초소 (Guard Post)</div>
+                </div>
+
+                <!-- Location: Alchemy Lab -->
+                <div class="location-node" id="loc_AlchemyLab" style="--accent-color: #34D399; left: 15%; top: 50%;">
+                    <div class="location-header" style="color: #34D399;">🧪 연금술 공방 (Lab)</div>
                 </div>
 
                 <!-- Location: Square -->
-                <div class="location-node" id="loc_Square" style="--accent-color: #22D3EE;">
-                    <div class="location-header" style="color: #22D3EE;">⛲ 광장 (Square)</div>
-                    <div class="location-badge-container" id="badges_Square"></div>
+                <div class="location-node" id="loc_Square" style="--accent-color: #22D3EE; left: 50%; top: 50%;">
+                    <div class="location-header" style="color: #22D3EE;">⛲ 마을 광장 (Square)</div>
                 </div>
+
+                <!-- Location: Forge -->
+                <div class="location-node" id="loc_Forge" style="--accent-color: #F59E0B; left: 85%; top: 50%;">
+                    <div class="location-header" style="color: #F59E0B;">🔨 대장간 (Forge)</div>
+                </div>
+
+                <!-- Location: Back Alley -->
+                <div class="location-node" id="loc_BackAlley" style="--accent-color: #94A3B8; left: 15%; top: 80%;">
+                    <div class="location-header" style="color: #94A3B8;">👤 뒷골목 (Back Alley)</div>
+                </div>
+
+                <!-- Location: Tavern -->
+                <div class="location-node" id="loc_Tavern" style="--accent-color: #FBBF24; left: 85%; top: 80%;">
+                    <div class="location-header" style="color: #FBBF24;">🍺 술집 (Tavern)</div>
+                </div>
+
+                <!-- NPC Avatars Container -->
+                <div id="npcAvatarsContainer" style="position: absolute; inset: 0; pointer-events: none; z-index: 10;"></div>
             </div>
 
             <!-- Stats -->
@@ -808,23 +951,51 @@
                 </div>
                 <button class="btn-close" onclick="closeDialogueModal()">&times;</button>
             </div>
-            <div class="chat-messages" id="chatMessages">
-                <!-- Messages -->
+            <div class="chat-body-wrapper">
+                <!-- Left: Chat Main -->
+                <div class="chat-main">
+                    <div class="chat-messages" id="chatMessages">
+                        <!-- Messages -->
+                    </div>
+                    <div class="chat-input-area">
+                        <input type="text" id="chatInput" class="chat-input" placeholder="대화를 입력하세요..." onkeydown="if(event.key === 'Enter') sendPlayerMessage()">
+                        <button class="btn-send" onclick="sendPlayerMessage()">전송</button>
+                    </div>
+                    <button class="btn-end-chat" onclick="endPlayerDialogue()">대화 종료 및 기억 통합</button>
+                </div>
+
+                <!-- Right: NPC Info Panel -->
+                <div class="chat-info-panel" id="modalNpcInfoPanel">
+                    <!-- Dynamic Profile & Relations -->
+                </div>
             </div>
-            <div class="chat-input-area">
-                <input type="text" id="chatInput" class="chat-input" placeholder="대화를 입력하세요..." onkeydown="if(event.key === 'Enter') sendPlayerMessage()">
-                <button class="btn-send" onclick="sendPlayerMessage()">전송</button>
-            </div>
-            <button class="btn-end-chat" onclick="endPlayerDialogue()">대화 종료 및 기억 통합</button>
         </div>
     </div>
 
     <script>
         const NPC_METADATA = {
-            'npc_kyle': { name: '카일', job: '성직자', color: '#A78BFA' },
-            'npc_eva': { name: '에바', job: '술집 바텐더', color: '#F472B6' },
-            'npc_bart': { name: '바르트', job: '노용병', color: '#34D399' },
-            'player': { name: '플레이어', job: '여행자', color: '#38BDF8' }
+            'npc_kyle': { name: '카일', job: '성직자', color: '#A78BFA', emoji: '🧙' },
+            'npc_eva': { name: '에바', job: '바텐더', color: '#F472B6', emoji: '👩‍🍳' },
+            'npc_bart': { name: '바르트', job: '노용병', color: '#10B981', emoji: '🛡️' },
+            'npc_aileen': { name: '에일린', job: '연금술사', color: '#34D399', emoji: '🧪' },
+            'npc_cedric': { name: '세드릭', job: '젊은 귀족', color: '#E2E8F0', emoji: '👑' },
+            'npc_hugo': { name: '휴고', job: '대장장이', color: '#F59E0B', emoji: '🔨' },
+            'npc_lucas': { name: '루카스', job: '경비대장', color: '#F87171', emoji: '⚔️' },
+            'npc_lyra': { name: '라이라', job: '음유시인', color: '#EC4899', emoji: '🎵' },
+            'npc_maya': { name: '마야', job: '고아원 원장', color: '#8B5CF6', emoji: '👩‍👦' },
+            'npc_valac': { name: '발락', job: '암시장 정보원', color: '#94A3B8', emoji: '🕵️' },
+            'player': { name: '플레이어', job: '여행자', color: '#38BDF8', emoji: '🚶' }
+        };
+
+        const LOCATION_COORDINATES = {
+            'Manor': { left: 15, top: 28 },
+            'Church': { left: 50, top: 28 },
+            'GuardPost': { left: 85, top: 28 },
+            'AlchemyLab': { left: 15, top: 58 },
+            'Square': { left: 50, top: 58 },
+            'Forge': { left: 85, top: 58 },
+            'BackAlley': { left: 15, top: 88 },
+            'Tavern': { left: 85, top: 88 }
         };
 
         let currentActiveSession = null;
@@ -840,13 +1011,19 @@
             setInterval(refreshStats, 5000);
         });
 
+        let globalAgents = [];
+
         // 1. Fetch Agents Status
         function refreshAgents() {
             fetch('/api/agents')
                 .then(res => res.json())
                 .then(agents => {
+                    globalAgents = agents;
                     renderNpcCards(agents);
                     updateNpcMapBadges(agents);
+                    if (activeNpcId) {
+                        updateModalNpcInfo(activeNpcId);
+                    }
                 })
                 .catch(err => console.error("Error fetching agents:", err));
         }
@@ -892,9 +1069,12 @@
 
                 card.innerHTML = `
                     <div class="npc-card-header">
-                        <div>
-                            <div class="npc-name">${meta.name}</div>
-                            <div class="npc-job">${meta.job}</div>
+                        <div style="display: flex; align-items: center; gap: 12px;">
+                            <div style="font-size: 28px; background: rgba(0,0,0,0.2); border-radius: 50%; width: 42px; height: 42px; display: flex; align-items: center; justify-content: center; border: 1px solid ${meta.color}; box-shadow: 0 0 8px ${meta.color}40;">${meta.emoji}</div>
+                            <div>
+                                <div class="npc-name" style="color: ${meta.color}; font-size: 15px;">${meta.name}</div>
+                                <div class="npc-job">${meta.job}</div>
+                            </div>
                         </div>
                     </div>
                     <div class="npc-status-item">
@@ -917,38 +1097,120 @@
             });
         }
 
+        function getLocKey(locName) {
+            if (!locName) return 'Square';
+            const lower = locName.toLowerCase();
+            if (lower.includes('manor') || lower.includes('저택')) return 'Manor';
+            if (lower.includes('church') || lower.includes('성당')) return 'Church';
+            if (lower.includes('guard') || lower.includes('초소') || lower.includes('경비')) return 'GuardPost';
+            if (lower.includes('alchemy') || lower.includes('연금')) return 'AlchemyLab';
+            if (lower.includes('square') || lower.includes('광장')) return 'Square';
+            if (lower.includes('forge') || lower.includes('대장')) return 'Forge';
+            if (lower.includes('back') || lower.includes('뒷골목')) return 'BackAlley';
+            if (lower.includes('tavern') || lower.includes('술집')) return 'Tavern';
+            return 'Square';
+        }
+
         // Render Map badges
         function updateNpcMapBadges(agents) {
-            // Clear containers
-            document.getElementById('badges_Church').innerHTML = '';
-            document.getElementById('badges_Tavern').innerHTML = '';
-            document.getElementById('badges_Square').innerHTML = '';
+            const container = document.getElementById('npcAvatarsContainer');
+            if (!container) return;
 
-            agents.forEach(agent => {
-                const meta = NPC_METADATA[agent.agentId] || { name: agent.name, color: '#00F0FF' };
-                let locId = 'Square';
-                if (agent.currentLocation.includes('Church') || agent.currentLocation.includes('성당')) {
-                    locId = 'Church';
-                } else if (agent.currentLocation.includes('Tavern') || agent.currentLocation.includes('술집')) {
-                    locId = 'Tavern';
+            // Get existing avatars in DOM
+            const existingAvatars = {};
+            Array.from(container.children).forEach(child => {
+                if (child.id.startsWith('avatar_')) {
+                    existingAvatars[child.id.replace('avatar_', '')] = child;
                 }
+            });
 
-                const targetContainer = document.getElementById(`badges_${locId}`);
-                if (!targetContainer) return;
+            // 1. Group agents by location key
+            const locGroups = {};
+            agents.forEach(agent => {
+                const locKey = getLocKey(agent.currentLocation);
+                if (!locGroups[locKey]) {
+                    locGroups[locKey] = [];
+                }
+                locGroups[locKey].push(agent);
+            });
 
-                const badge = document.createElement('div');
-                badge.className = 'map-npc-badge';
-                badge.id = `map_badge_${agent.agentId}`;
-                badge.style.setProperty('--accent-color', meta.color);
-                badge.onclick = () => openDialogueModal(agent.agentId);
+            // 2. Position agents with offset to avoid overlap
+            const activeAgentIds = new Set();
 
-                badge.innerHTML = `
-                    <div class="map-npc-dot"></div>
-                    <span class="map-npc-name">${meta.name}</span>
-                    <div class="speech-bubble" id="bubble_${agent.agentId}" style="--bubble-border: ${meta.color}"></div>
-                `;
+            Object.keys(locGroups).forEach(locKey => {
+                const group = locGroups[locKey];
+                const baseCoord = LOCATION_COORDINATES[locKey] || { left: 50, top: 50 };
+                const count = group.length;
 
-                targetContainer.appendChild(badge);
+                group.forEach((agent, index) => {
+                    activeAgentIds.add(agent.agentId);
+                    const meta = NPC_METADATA[agent.agentId] || { name: agent.name, color: '#00F0FF', emoji: '👤' };
+
+                    // Calculate offset if multiple NPCs in the same location (dynamic radius based on count)
+                    let offsetLeft = 0;
+                    let offsetTop = 0;
+                    if (count > 1) {
+                        const radiusX = 22 + count * 6.5; // Scale radius with count to prevent overlapping
+                        const radiusY = 14 + count * 4.5;
+                        const angle = (index * 2 * Math.PI) / count;
+                        offsetLeft = Math.cos(angle) * radiusX;
+                        offsetTop = Math.sin(angle) * radiusY; // vertical squash for pseudo-perspective
+                    }
+
+                    const leftVal = `calc(${baseCoord.left}% + ${offsetLeft}px)`;
+                    const topVal = `calc(${baseCoord.top}% + ${offsetTop}px)`;
+
+                    let avatar = existingAvatars[agent.agentId];
+                    if (!avatar) {
+                        // Create new avatar
+                        avatar = document.createElement('div');
+                        avatar.id = `avatar_${agent.agentId}`;
+                        avatar.className = 'map-npc-avatar';
+                        avatar.style.setProperty('--accent-color', meta.color);
+                        avatar.onclick = () => openDialogueModal(agent.agentId);
+
+                        avatar.innerHTML = `
+                            <span>${meta.emoji}</span>
+                            <div class="map-npc-avatar-label">${meta.name}</div>
+                            <div class="speech-bubble" id="bubble_${agent.agentId}" style="--bubble-border: ${meta.color}"></div>
+                        `;
+
+                        // Initial spawn without transitions
+                        avatar.style.transition = 'none';
+                        avatar.style.left = leftVal;
+                        avatar.style.top = topVal;
+
+                        container.appendChild(avatar);
+                        
+                        // Force reflow
+                        avatar.offsetHeight;
+                        avatar.style.transition = '';
+                    } else {
+                        // Update existing avatar position
+                        const prevLeft = avatar.style.left;
+                        const prevTop = avatar.style.top;
+
+                        avatar.style.left = leftVal;
+                        avatar.style.top = topVal;
+
+                        // Trigger walking animation if position changed
+                        if (prevLeft !== leftVal || prevTop !== topVal) {
+                            avatar.classList.add('walking');
+
+                            if (avatar.walkTimeout) clearTimeout(avatar.walkTimeout);
+                            avatar.walkTimeout = setTimeout(() => {
+                                avatar.classList.remove('walking');
+                            }, 2500); // matching CSS transition time
+                        }
+                    }
+                });
+            });
+
+            // 3. Remove orphaned avatars
+            Object.keys(existingAvatars).forEach(agentId => {
+                if (!activeAgentIds.has(agentId)) {
+                    container.removeChild(existingAvatars[agentId]);
+                }
             });
         }
 
@@ -1082,6 +1344,78 @@
             }
         }
 
+        // Render NPC detailed status & relationships inside dialogue modal
+        function updateModalNpcInfo(npcId) {
+            const panel = document.getElementById('modalNpcInfoPanel');
+            if (!panel) return;
+
+            const agent = globalAgents.find(a => a.agentId === npcId);
+            if (!agent) {
+                panel.innerHTML = '<div style="color: var(--text-secondary); font-size: 12px; padding: 10px;">정보를 불러올 수 없습니다.</div>';
+                return;
+            }
+
+            const meta = NPC_METADATA[npcId] || { name: agent.name, job: agent.job, color: '#00F0FF', emoji: '👤' };
+
+            // Build relationships HTML
+            let relationsHtml = '';
+            if (agent.relationships && agent.relationships.length > 0) {
+                agent.relationships.forEach(rel => {
+                    const targetMeta = NPC_METADATA[rel.targetAgentId] || { name: rel.targetAgentId, color: '#FFF', emoji: '👤' };
+                    relationsHtml += `
+                        <div class="relation-row" style="margin-bottom: 8px;">
+                            <span style="font-size: 12px; font-weight: 500;">
+                                ${targetMeta.emoji} ${targetMeta.name}
+                                <span style="font-size: 10px; color: var(--text-secondary); font-weight: normal;">(${rel.liking}/${rel.trust})</span>
+                            </span>
+                            <div class="relation-bars" title="호감도: ${rel.liking} / 신뢰도: ${rel.trust}">
+                                <div class="relation-bar-wrap">
+                                    <div class="relation-bar-fill" style="width: ${Math.max(0, Math.min(100, (rel.liking + 50)))}%; background: ${rel.liking >= 0 ? '#10B981' : '#EF4444'}"></div>
+                                </div>
+                                <div class="relation-bar-wrap">
+                                    <div class="relation-bar-fill" style="width: ${Math.max(0, Math.min(100, rel.trust))}%; background: #00A3FF"></div>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                });
+            } else {
+                relationsHtml = '<div style="color: var(--text-muted); font-size: 11px;">형성된 인간관계가 없습니다.</div>';
+            }
+
+            panel.innerHTML = `
+                <div class="modal-profile-header" style="--profile-color: ${meta.color}">
+                    <div class="modal-profile-avatar">${meta.emoji}</div>
+                    <div class="modal-profile-details">
+                        <div class="modal-profile-name" style="color: ${meta.color}">${meta.name}</div>
+                        <div class="modal-profile-job">${meta.job}</div>
+                    </div>
+                </div>
+                
+                <div class="modal-npc-status-box">
+                    <div class="modal-status-item">
+                        <span class="modal-status-label">현재 감정</span>
+                        <span class="modal-status-value" style="color: var(--accent-cyan);">${agent.emotion || '차분함'}</span>
+                    </div>
+                    <div class="modal-status-item">
+                        <span class="modal-status-label">현재 행동</span>
+                        <span class="modal-status-value" style="color: var(--text-primary); text-align:right;">${agent.activity || '대기 중'}</span>
+                    </div>
+                    <div class="modal-status-item">
+                        <span class="modal-status-label">현재 위치</span>
+                        <span class="modal-status-value" style="color: var(--accent-amber);">${agent.currentLocation || '알 수 없음'}</span>
+                    </div>
+                </div>
+
+                <div class="modal-relations-section">
+                    <div class="modal-relations-title">인물 관계망 (호감도 / 신뢰도)</div>
+                    <div style="margin-top: 6px;">
+                        ${relationsHtml}
+                    </div>
+                </div>
+            `;
+        }
+
         // 4. Player dialogue console (Modal)
         function openDialogueModal(npcId) {
             activeNpcId = npcId;
@@ -1091,6 +1425,9 @@
             // Clean chat log
             const messagesWrap = document.getElementById('chatMessages');
             messagesWrap.innerHTML = '';
+            
+            // Render NPC status & relationships details
+            updateModalNpcInfo(npcId);
             
             appendSystemMessage("대화 세션 개설 요청 중...");
             document.getElementById('dialogueModal').classList.add('active');
@@ -1120,6 +1457,16 @@
         // Close modal
         function closeDialogueModal() {
             document.getElementById('dialogueModal').classList.remove('active');
+            
+            if (currentActiveSession) {
+                // 백엔드에 대화 종료 신호 전송 (플레이어/NPC 상태 락 해제 목적)
+                fetch('/api/player/dialogue/end', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ sessionId: currentActiveSession })
+                }).catch(err => console.error("대화 종료 API 호출 실패:", err));
+            }
+
             currentActiveSession = null;
             activeNpcId = null;
             refreshAgents();

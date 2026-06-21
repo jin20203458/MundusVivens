@@ -241,6 +241,9 @@ public class MundusVivensGrpcService : MundusVivensGrpc.MundusVivensGrpcBase
         };
         _ = _broadcaster.BroadcastAsync(tickEvent);
 
+        // 플레이어 잉여 세션(타임아웃) 정리 (약 2분)
+        _ = _playerDialogueManager.CleanupIdleSessionsAsync(TimeSpan.FromMinutes(2), context.CancellationToken);
+
         // 🆕 소문 쇠퇴(Decay) 처리
         try
         {
@@ -271,11 +274,19 @@ public class MundusVivensGrpcService : MundusVivensGrpc.MundusVivensGrpcBase
             });
         }
 
-        return Task.FromResult(new ProcessWorldTickResponse
+        var busyAgentIds = _agentsAccessor().Values
+            .Where(a => a.Status.IsInConversation)
+            .Select(a => a.AgentId)
+            .ToList();
+
+        var response = new ProcessWorldTickResponse
         {
             Success = true,
             Message = $"틱 {request.TickNumber} 처리가 정상적으로 완료되었습니다."
-        });
+        };
+        response.BusyAgentIds.AddRange(busyAgentIds);
+
+        return Task.FromResult(response);
     }
 
     public override Task<GetDialogueResultResponse> GetDialogueResult(GetDialogueResultRequest request, ServerCallContext context)
@@ -404,9 +415,14 @@ public class MundusVivensGrpcService : MundusVivensGrpc.MundusVivensGrpcBase
 
         if (locations.Count == 0)
         {
+            locations.Add("영주 저택 (Manor)");
             locations.Add("성당 (Church)");
+            locations.Add("경비 초소 (Guard Post)");
+            locations.Add("연금술 공방 (Alchemy Lab)");
+            locations.Add("마을 광장 (Square)");
+            locations.Add("대장간 (Forge)");
+            locations.Add("뒷골목 (Back Alley)");
             locations.Add("술집 (Tavern)");
-            locations.Add("광장 (Square)");
         }
 
         response.Locations.AddRange(locations);

@@ -200,9 +200,14 @@ JSON 형식으로만 대답하십시오. 다른 마크다운이나 텍스트를 
 각 일정은 시작 시간, 종료 시간, 목표 장소, 해당 장소에서 할 구체적인 행동(Activity)을 포함해야 합니다.
 
 [이동 가능한 장소 목록]
+- 영주 저택 (Manor)
 - 성당 (Church)
+- 경비 초소 (Guard Post)
+- 연금술 공방 (Alchemy Lab)
+- 마을 광장 (Square)
+- 대장간 (Forge)
+- 뒷골목 (Back Alley)
 - 술집 (Tavern)
-- 광장 (Square)
 
 [NPC 페르소나]
 - 이름/직업: {agent.Persona.Name} / {agent.Persona.Job}
@@ -221,7 +226,7 @@ JSON 형식으로만 대답하십시오. 다른 마크다운이나 텍스트를 
 [스케줄 작성 규칙]
 1. 0시부터 23시까지의 일정이 빈 틈 없이 연속적이어야 합니다. (예: 0~7, 7~10, 10~15, 15~18, 18~22, 22~23)
 2. NPC의 직업과 Faction(진영), 대화 상대들과의 관계를 일정에 자연스럽게 녹여내십시오. 
-3. 목표 장소(target_location)는 반드시 [이동 가능한 장소 목록] 중 하나여야 합니다. 반드시 정확히 일치해야 합니다: ""성당 (Church)"", ""술집 (Tavern)"", ""광장 (Square)"".
+3. 목표 장소(target_location)는 반드시 [이동 가능한 장소 목록] 중 하나여야 합니다. 반드시 정확히 일치해야 합니다: ""영주 저택 (Manor)"", ""성당 (Church)"", ""경비 초소 (Guard Post)"", ""연금술 공방 (Alchemy Lab)"", ""마을 광장 (Square)"", ""대장간 (Forge)"", ""뒷골목 (Back Alley)"", ""술집 (Tavern)"".
 4. 24시간 계획을 3~6개의 시간대로 나누어 짜주십시오. 시작 시간과 종료 시간은 반드시 정수(0~23)여야 합니다.
 
 [출력 형식]
@@ -273,14 +278,18 @@ JSON 형식으로만 대답하십시오. 다른 마크다운이나 텍스트를 
 
     private string MapToValidLocation(string rawLocation)
     {
-        if (string.IsNullOrWhiteSpace(rawLocation)) return "광장 (Square)";
+        if (string.IsNullOrWhiteSpace(rawLocation)) return "마을 광장 (Square)";
         
-        if (rawLocation.Contains("성당") || rawLocation.Contains("Church"))
-            return "성당 (Church)";
-        if (rawLocation.Contains("술집") || rawLocation.Contains("Tavern"))
-            return "술집 (Tavern)";
+        var lower = rawLocation.ToLower();
+        if (lower.Contains("저택") || lower.Contains("manor")) return "영주 저택 (Manor)";
+        if (lower.Contains("성당") || lower.Contains("church")) return "성당 (Church)";
+        if (lower.Contains("초소") || lower.Contains("경비") || lower.Contains("guard")) return "경비 초소 (Guard Post)";
+        if (lower.Contains("연금") || lower.Contains("공방") || lower.Contains("alchemy") || lower.Contains("lab")) return "연금술 공방 (Alchemy Lab)";
+        if (lower.Contains("대장간") || lower.Contains("forge")) return "대장간 (Forge)";
+        if (lower.Contains("골목") || lower.Contains("alley")) return "뒷골목 (Back Alley)";
+        if (lower.Contains("술집") || lower.Contains("tavern")) return "술집 (Tavern)";
         
-        return "광장 (Square)"; // 기본값
+        return "마을 광장 (Square)"; // 기본값
     }
 
     private List<DailyScheduleItem> GetFallbackSchedule(string agentId)
