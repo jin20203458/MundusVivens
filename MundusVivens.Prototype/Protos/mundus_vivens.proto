@@ -250,3 +250,76 @@ message BatchUpdateAgentStatusResponse {
   int32 updated_count = 1;
 }
 
+// ============================================================
+// TCP 클라이언트 패킷 페이로드 메시지 (Phase 6 Step 3)
+// ============================================================
+
+// CS_LOGIN 페이로드
+message LoginRequest {
+  string player_id = 1;
+  string player_name = 2;
+}
+
+// SC_LOGIN_ACK 페이로드
+message LoginResponse {
+  bool success = 1;
+  string message = 2;
+  repeated string locations = 3;           // 월드 내 모든 위치 목록
+  repeated NpcSnapshot npcs = 4;           // 현재 NPC 전체 상태
+}
+
+// 단일 NPC 상태 스냅샷 (SC_WORLD_SNAPSHOT, SC_NPC_UPDATE 공용)
+message NpcSnapshot {
+  string npc_id = 1;
+  string display_name = 2;
+  string location = 3;
+  string emotion = 4;
+  string activity = 5;
+}
+
+// SC_WORLD_SNAPSHOT 페이로드
+message WorldSnapshotPayload {
+  int32 tick = 1;
+  repeated NpcSnapshot npcs = 2;
+}
+
+// CS_PLAYER_MOVE 페이로드
+message PlayerMoveRequest {
+  string target_location = 1;
+}
+
+// CS_TALK_TO_NPC 페이로드
+message TalkToNpcRequest {
+  string npc_id = 1;
+}
+
+// SC_NPC_REPLY 페이로드
+message NpcReplyPayload {
+  string session_id = 1;
+  string npc_name = 2;
+  string reply_text = 3;
+}
+
+// CS_PLAYER_MESSAGE 페이로드
+message PlayerMessageRequest {
+  string session_id = 1;
+  string message = 2;
+}
+
+// CS_END_DIALOGUE 페이로드
+message EndDialogueRequest {
+  string session_id = 1;
+}
+
+// SC_DIALOGUE_EVENT 페이로드 (NPC 간 대화 이벤트 브로드캐스트)
+message DialogueEventPayload {
+  string task_id = 1;
+  string npc_a_name = 2;
+  string npc_b_name = 3;
+  string location = 4;
+  bool is_started = 5;                     // true=대화 시작, false=대화 종료
+  string summary = 6;                     // 완료 시 요약
+  repeated DialogueLine lines = 7;        // 완료 시 대사 목록
+}
+
+
