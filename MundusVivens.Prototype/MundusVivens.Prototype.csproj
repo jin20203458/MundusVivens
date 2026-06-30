@@ -25,4 +25,8 @@
     <Protobuf Include="Protos\mundus_vivens.proto" GrpcServices="Both" />
   </ItemGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="..\AiAgent.Diagnostics\AiAgent.Diagnostics.csproj" />
+  </ItemGroup>
+
 </Project>

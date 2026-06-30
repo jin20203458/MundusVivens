@@ -28,6 +28,13 @@ public class Program
         Console.WriteLine("🌍 Project Mundus Vivens — Phase 3.5 Gossip Improved Server");
         Console.WriteLine("=======================================================\n");
 
+        #if DEBUG
+        // Initialize diagnostic logging pipeline
+        AiAgent.Diagnostics.AiDebugLogger.BasePath = AppDomain.CurrentDomain.BaseDirectory;
+        AiAgent.Diagnostics.AiDiagnosticChannels.Start();
+        AiAgent.Diagnostics.AiDiagnosticObserver.Register();
+        #endif
+
         var builder = WebApplication.CreateBuilder(args);
 
         // 1. 설정 불러오기
@@ -102,6 +109,16 @@ public class Program
         });
 
         var app = builder.Build();
+
+        #if DEBUG
+        // Gracefully stop the diagnostic channels on app shutdown
+        var lifetime = app.Services.GetRequiredService<IHostApplicationLifetime>();
+        lifetime.ApplicationStopping.Register(() =>
+        {
+            AiAgent.Diagnostics.AiDiagnosticObserver.Unregister();
+            AiAgent.Diagnostics.AiDiagnosticChannels.StopAsync().GetAwaiter().GetResult();
+        });
+        #endif
 
         app.UseCors();
 

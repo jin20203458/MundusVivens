@@ -1,0 +1,3 @@
+[submodule "AiAgent.Diagnostics"]
+	path = AiAgent.Diagnostics
+	url = https://github.com/jin20203458/AiAgent.Diagnostics.git
