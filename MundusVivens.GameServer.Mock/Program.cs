@@ -32,8 +32,7 @@ class Program
         { "npc_bart", "술 마시기" }
     };
 
-    // 대화 쿨다운 관리 (Key: npc_A:npc_B, Value: 대화가 가능해지는 최소 틱 수)
-    private static readonly Dictionary<string, int> DialogueCooldowns = new();
+
 
     static async Task Main(string[] args)
     {
@@ -126,13 +125,6 @@ class Program
                     // 동일한 위치에 있는지 확인
                     if (CurrentLocations[npcA] == CurrentLocations[npcB])
                     {
-                        string cooldownKey = GetCooldownKey(npcA, npcB);
-                        
-                        // 쿨다운 상태 확인
-                        if (DialogueCooldowns.TryGetValue(cooldownKey, out int readyTick) && tick < readyTick)
-                        {
-                            continue; // 아직 쿨다운 중
-                        }
 
                         // 50% 확률로 대화 발생
                         if (random.NextDouble() < 0.5)
@@ -171,8 +163,7 @@ class Program
                                 CurrentActivities[npcA] = "대화 마침";
                                 CurrentActivities[npcB] = "대화 마침";
 
-                                // 쿨다운 적용 (대화 완료 틱 기준 다음 5틱 동안 대화 금지)
-                                DialogueCooldowns[cooldownKey] = tick + 5;
+
                             }
                             catch (Exception ex)
                             {
@@ -190,10 +181,5 @@ class Program
         }
     }
 
-    private static string GetCooldownKey(string a, string b)
-    {
-        var list = new List<string> { a, b };
-        list.Sort();
-        return string.Join(":", list);
-    }
+
 }
