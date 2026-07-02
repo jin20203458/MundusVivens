@@ -112,6 +112,25 @@ public class MundusVivensGrpcService : MundusVivensGrpc.MundusVivensGrpcBase
                 response.EmotionUpdates.AddRange(result.EmotionUpdates);
             }
 
+            if (result.NextJobs != null)
+            {
+                var agents = _agentsAccessor();
+                foreach (var nj in result.NextJobs)
+                {
+                    if (agents.TryGetValue(nj.AgentId, out var agent))
+                    {
+                        response.NextJobs.Add(new JobPayload
+                        {
+                            NpcId = agent.NumericId,
+                            JobId = agent.Status.ActiveJobId,
+                            TargetLocation = agent.Status.ActiveJobLocation,
+                            Intent = agent.Status.ActiveJobIntent,
+                            Priority = 2 // 돌발 동기화 일정이므로 2 우선순위
+                        });
+                    }
+                }
+            }
+
             return response;
         }
         catch (Exception ex)
@@ -509,22 +528,33 @@ public class MundusVivensGrpcService : MundusVivensGrpc.MundusVivensGrpcBase
 
             Console.WriteLine($"⏸️ [JobGiver] NPC '{agent.Persona.Name}'의 Job {request.JobId}가 중단되었습니다. 사유: {reasonStr} (상세: {request.DetailedContext})");
 
-            try
+            if (request.ReasonCode == InterruptReason.DialogueBusy)
             {
-                var newJobPayload = await TriggerDynamicReflectionAsync(agent, reasonStr, request.DetailedContext, request.CurrentTick);
-                if (newJobPayload != null)
-                {
-                    response.NewJob = newJobPayload;
-                    response.Message = $"중단 후 새로운 돌발 Job {newJobPayload.JobId}가 성공적으로 수립되었습니다.";
-                }
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"[Error] 돌발 성찰 실패: {ex.Message}");
+                Console.WriteLine($"⏸️ [JobGiver] NPC '{agent.Persona.Name}'가 대화 중이므로 대기합니다. (대화 완료 시점에 동기화된 계획이 수립됩니다.)");
                 agent.Status.ActiveJobId = 0;
                 agent.Status.ActiveJobLocation = string.Empty;
                 agent.Status.ActiveJobIntent = string.Empty;
-                response.Message = $"돌발 성찰 실패: {ex.Message}. 기존 Job을 취소합니다.";
+                response.Message = "대화 중이므로 성찰을 생략합니다.";
+            }
+            else
+            {
+                try
+                {
+                    var newJobPayload = await TriggerDynamicReflectionAsync(agent, reasonStr, request.DetailedContext, request.CurrentTick);
+                    if (newJobPayload != null)
+                    {
+                        response.NewJob = newJobPayload;
+                        response.Message = $"중단 후 새로운 돌발 Job {newJobPayload.JobId}가 성공적으로 수립되었습니다.";
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[Error] 돌발 성찰 실패: {ex.Message}");
+                    agent.Status.ActiveJobId = 0;
+                    agent.Status.ActiveJobLocation = string.Empty;
+                    agent.Status.ActiveJobIntent = string.Empty;
+                    response.Message = $"돌발 성찰 실패: {ex.Message}. 기존 Job을 취소합니다.";
+                }
             }
         }
 

@@ -172,4 +172,20 @@ public class GroupConversationScript
 
     [JsonPropertyName("gossips_exchanged")]
     public List<GossipExchangeInfo> GossipsExchanged { get; set; } = new();
+
+    [JsonPropertyName("next_jobs")]
+    public List<NextJobDto> NextJobs { get; set; } = new();
 }
+
+public class NextJobDto
+{
+    [JsonPropertyName("agent_id")]
+    public string AgentId { get; set; } = string.Empty;
+
+    [JsonPropertyName("target_location")]
+    public string TargetLocation { get; set; } = string.Empty;
+
+    [JsonPropertyName("activity")]
+    public string Activity { get; set; } = string.Empty;
+}
+

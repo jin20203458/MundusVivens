@@ -17,6 +17,7 @@ public class DialogueResult
     public List<string> DialogueLines { get; set; } = new();
     public List<DialogueLine> StructuredLines { get; set; } = new();
     public List<AgentEmotionUpdate> EmotionUpdates { get; set; } = new(); // 🆕 감정 업데이트 목록 추가
+    public List<NextJobDto> NextJobs { get; set; } = new(); // 🆕 대화 종료 후 공동 계획 수립 결과
 }
 
 public interface IDialogueOrchestrator
@@ -171,7 +172,7 @@ public class DialogueOrchestrator : IDialogueOrchestrator
 
         string systemPrompt = $$"""
 <role>월드 오케스트레이터</role>
-<task>참여자 정보와 소문 폭로 지시를 바탕으로 다자간 대화 대본을 작성하고, 그 대화의 결과로 생겨난 관계 변화, 감정 변화, 유통된 소문 정보를 일괄 생성하십시오.</task>
+<task>참여자 정보와 소문 폭로 지시를 바탕으로 다자간 대화 대본을 작성하고, 그 대화의 결과로 생겨난 관계 변화, 감정 변화, 유통된 소문 정보, 그리고 대화 직후 참여자들의 다음 행동 계획(next_jobs)을 일괄 생성하십시오.</task>
 
 <participants>
 [참여자 목록 및 정보]
@@ -204,6 +205,21 @@ public class DialogueOrchestrator : IDialogueOrchestrator
    - content: 실제로 대화에서 흘려진 소문 텍스트 (왜곡 가이드라인에 의해 왜곡/변형된 형태 그대로 추출되어야 함)
    - credibility_rating: 들려온 이야기에 대해 화자가 보인 신빙성 정도 (0 ~ 100)
    - speaker_id: 소문을 말한 화자의 AgentId
+6. next_jobs (대화 후 다음 행동 계획):
+   - 대화 종료 후 각 참여자가 이동할 다음 장소(target_location)와 수행할 구체적인 행동(activity)을 결정하십시오.
+   - 대화 내용에서 두 에이전트가 무언가 함께하기로 합의했다면(예: 술을 마시러 술집으로 가자고 함), target_location을 반드시 동일하게 일치시키십시오.
+   - target_location은 반드시 아래 [이동 가능한 장소 목록] 중 하나여야 합니다.
+   - activity는 그 장소에서 할 구체적인 행동(예: "Bart와 술집에서 술을 마시며 이야기를 나눈다")이어야 합니다.
+
+[이동 가능한 장소 목록]
+- 영주 저택 (Manor)
+- 성당 (Church)
+- 경비 초소 (Guard Post)
+- 연금술 공방 (Alchemy Lab)
+- 마을 광장 (Square)
+- 대장간 (Forge)
+- 뒷골목 (Back Alley)
+- 술집 (Tavern)
 </rules>
 
 <output_format>
@@ -224,6 +240,10 @@ public class DialogueOrchestrator : IDialogueOrchestrator
   ],
   "gossips_exchanged": [
     { "gossip_id": "gossip_...", "subject": "npc_kyle", "content": "왜곡되어 말해진 소문 내용", "credibility_rating": 80, "speaker_id": "npc_eva" }
+  ],
+  "next_jobs": [
+    { "agent_id": "npc_eva", "target_location": "술집 (Tavern)", "activity": "Bart와 술집에서 술을 마시며 이야기를 나눈다" },
+    { "agent_id": "npc_bart", "target_location": "술집 (Tavern)", "activity": "Eva와 술집에서 술을 마시며 이야기를 나눈다" }
   ]
 }
 </output_format>
@@ -472,6 +492,25 @@ public class DialogueOrchestrator : IDialogueOrchestrator
             }
         }
 
+        // Apply next jobs
+        if (analysis.NextJobs != null)
+        {
+            foreach (var nj in analysis.NextJobs)
+            {
+                var agent = participants.FirstOrDefault(p => p.AgentId == nj.AgentId);
+                if (agent == null) continue;
+
+                ulong newJobId = MundusVivensGrpcService.GenerateNextJobId();
+                string correctedLocation = MapToValidLocation(nj.TargetLocation);
+
+                agent.Status.ActiveJobId = newJobId;
+                agent.Status.ActiveJobLocation = correctedLocation;
+                agent.Status.ActiveJobIntent = nj.Activity;
+
+                Console.WriteLine($"🧠 [Post-Dialogue Plan] NPC '{agent.Persona.Name}'의 새로운 행동 결정: 위치={correctedLocation}, 행동={nj.Activity}");
+            }
+        }
+
         Console.WriteLine($"📝 기록된 에피소드 요약: \"{analysis.Summary}\"");
         Console.WriteLine($"=======================================================\n");
 
@@ -480,9 +519,25 @@ public class DialogueOrchestrator : IDialogueOrchestrator
             Summary = analysis.Summary,
             DialogueLines = lines,
             StructuredLines = structuredLines,
-            EmotionUpdates = emotionUpdatesList
+            EmotionUpdates = emotionUpdatesList,
+            NextJobs = analysis.NextJobs ?? new()
         };
     }
+
+    private string MapToValidLocation(string rawLocation)
+    {
+        if (string.IsNullOrWhiteSpace(rawLocation)) return "마을 광장 (Square)";
+        var lower = rawLocation.ToLower();
+        if (lower.Contains("저택") || lower.Contains("manor")) return "영주 저택 (Manor)";
+        if (lower.Contains("성당") || lower.Contains("church")) return "성당 (Church)";
+        if (lower.Contains("초소") || lower.Contains("경비") || lower.Contains("guard")) return "경비 초소 (Guard Post)";
+        if (lower.Contains("연금") || lower.Contains("공방") || lower.Contains("alchemy") || lower.Contains("lab")) return "연금술 공방 (Alchemy Lab)";
+        if (lower.Contains("대장간") || lower.Contains("forge")) return "대장간 (Forge)";
+        if (lower.Contains("골목") || lower.Contains("alley")) return "뒷골목 (Back Alley)";
+        if (lower.Contains("술집") || lower.Contains("tavern")) return "술집 (Tavern)";
+        return "마을 광장 (Square)";
+    }
+
 
     private Relationship GetOrCreateRelationship(AgentInstance agent, string targetId)
     {

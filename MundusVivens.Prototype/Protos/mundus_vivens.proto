@@ -42,6 +42,7 @@ message TriggerDialogueResponse {
   repeated string dialogue_lines = 5;
   repeated DialogueLine structured_lines = 6; // 🆕 구조화된 대사 데이터 (하위호환 유지하며 추가)
   repeated AgentEmotionUpdate emotion_updates = 7; // 🆕 대화에 따른 감정 업데이트
+  repeated JobPayload next_jobs = 8; // 🆕 대화 결과에 따른 다음 행동들
 }
 
 message GetAgentStatusRequest {

@@ -44,6 +44,7 @@ public class DialogueSchedulerResult
     public List<string> DialogueLines { get; set; } = new();
     public List<DialogueLine> StructuredLines { get; set; } = new();
     public List<AgentEmotionUpdate> EmotionUpdates { get; set; } = new(); // 🆕 감정 업데이트 추가
+    public List<NextJobDto> NextJobs { get; set; } = new(); // 🆕 대화 종료 후 공동 계획 수립 결과
 }
 
 public class InteractionScheduler : BackgroundService
@@ -280,7 +281,8 @@ public class InteractionScheduler : BackgroundService
                                 Summary = result.Summary,
                                 DialogueLines = result.DialogueLines,
                                 StructuredLines = result.StructuredLines,
-                                EmotionUpdates = result.EmotionUpdates
+                                EmotionUpdates = result.EmotionUpdates,
+                                NextJobs = result.NextJobs
                             };
 
                             _completedResults[job.JobId] = (schedulerResult, DateTime.UtcNow);
