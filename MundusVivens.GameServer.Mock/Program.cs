@@ -32,7 +32,14 @@ class Program
         { "npc_bart", "술 마시기" }
     };
 
-
+    private static uint GetNumericId(string agentId) => agentId switch
+    {
+        "player" => 1,
+        "npc_eva" => 2,
+        "npc_kyle" => 3,
+        "npc_bart" => 4,
+        _ => 0
+    };
 
     static async Task Main(string[] args)
     {
@@ -105,7 +112,7 @@ class Program
                 // gRPC를 통해 C# AI 서버로 상태 전송
                 var statusRequest = new UpdateAgentStatusRequest
                 {
-                    AgentId = npcId,
+                    AgentId = GetNumericId(npcId),
                     Location = CurrentLocations[npcId],
                     Activity = CurrentActivities[npcId],
                     Emotion = "평온함" // 고정 또는 임의값
@@ -139,8 +146,8 @@ class Program
                             {
                                 var dialogueRequest = new TriggerDialogueRequest
                                 {
-                                    AgentIdA = npcA,
-                                    AgentIdB = npcB,
+                                    AgentIdA = GetNumericId(npcA),
+                                    AgentIdB = GetNumericId(npcB),
                                     WaitForCompletion = true
                                 };
 

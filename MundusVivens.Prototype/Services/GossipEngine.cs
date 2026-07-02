@@ -8,13 +8,16 @@ namespace MundusVivens.Prototype.Services;
 
 public interface IGossipEngine
 {
+    int CurrentTick { get; set; }
     KnownGossip? SelectGossipToShare(AgentInstance speaker, AgentInstance listener, IReadOnlyList<KnownGossip> topKCandidates);
     Task ProcessGossipSharingAsync(AgentInstance speaker, AgentInstance listener, GossipItem originalGossip, string sharedContent);
     void ApplyGossipDecay(AgentInstance agent, int currentWorldTick);
+    void DecayAgentGossips(AgentInstance agent, int currentTick);
 }
 
 public class GossipEngine : IGossipEngine
 {
+    public int CurrentTick { get; set; } = 0;
     private readonly IGeminiApiService _geminiApi;
     private readonly IEmbeddingCache _embeddingCache;
     private readonly Random _random = new();
@@ -185,7 +188,8 @@ public class GossipEngine : IGossipEngine
                 DirectInformantAgentId = speaker.AgentId,
                 PropagationPath = new List<string>(speakerPath) { speaker.AgentId },
                 AcquiredAt = DateTime.UtcNow,
-                LastReinforcedAt = DateTime.UtcNow
+                LastReinforcedAt = DateTime.UtcNow,
+                LastDecayedAtTick = CurrentTick
             };
 
             if (listener.RelationshipMap.TryGetValue(speaker.AgentId, out var rel))
@@ -201,6 +205,11 @@ public class GossipEngine : IGossipEngine
 
     public void ApplyGossipDecay(AgentInstance agent, int currentWorldTick)
     {
+        DecayAgentGossips(agent, currentWorldTick);
+    }
+
+    public void DecayAgentGossips(AgentInstance agent, int currentTick)
+    {
         var toRemove = new List<string>();
 
         foreach (var kvp in agent.KnownGossips)
@@ -208,13 +217,23 @@ public class GossipEngine : IGossipEngine
             var gossipId = kvp.Key;
             var knownGossip = kvp.Value;
 
+            if (knownGossip.LastDecayedAtTick == 0)
+            {
+                knownGossip.LastDecayedAtTick = currentTick;
+                continue;
+            }
+
+            int ticksPassed = currentTick - knownGossip.LastDecayedAtTick;
+            if (ticksPassed <= 0) continue;
+
             double decayRate = 0.005;
             if (knownGossip.HasSharedWithOthers)
             {
                 decayRate *= 0.5; // 전파한 소문은 느리게 쇠퇴
             }
 
-            knownGossip.SubjectiveBelief -= decayRate;
+            knownGossip.SubjectiveBelief -= decayRate * ticksPassed;
+            knownGossip.LastDecayedAtTick = currentTick;
 
             if (knownGossip.SubjectiveBelief < 0.1)
             {
@@ -226,7 +245,7 @@ public class GossipEngine : IGossipEngine
         {
             if (agent.KnownGossips.Remove(gossipId, out var removed))
             {
-                Console.WriteLine($"[GossipEngine] 🗑️ [소문 소멸] {agent.Persona.Name}의 '{removed.Gossip.Content}' 소문이 망각되었습니다 (Belief: {removed.SubjectiveBelief:F3})");
+                Console.WriteLine($"[GossipEngine] 🗑️ [소문 소멸(Lazy)] {agent.Persona.Name}의 '{removed.Gossip.Content}' 소문이 망각되었습니다 (Belief: {removed.SubjectiveBelief:F3})");
             }
         }
     }

@@ -9,6 +9,32 @@ using System.Threading.Tasks;
 
 namespace MundusVivens.Prototype.Services;
 
+public static class RelationshipChangeTracker
+{
+    private static readonly ConcurrentQueue<RelationshipDelta> _pendingDeltas = new();
+
+    public static void TrackChange(uint fromId, uint toId, int liking, int trust)
+    {
+        _pendingDeltas.Enqueue(new RelationshipDelta
+        {
+            FromAgentId = fromId,
+            ToAgentId = toId,
+            Liking = liking,
+            Trust = trust
+        });
+    }
+
+    public static List<RelationshipDelta> DrainDeltas()
+    {
+        var list = new List<RelationshipDelta>();
+        while (_pendingDeltas.TryDequeue(out var delta))
+        {
+            list.Add(delta);
+        }
+        return list;
+    }
+}
+
 public class MundusVivensGrpcService : MundusVivensGrpc.MundusVivensGrpcBase
 {
     private readonly InteractionScheduler _scheduler;
@@ -38,12 +64,25 @@ public class MundusVivensGrpcService : MundusVivensGrpc.MundusVivensGrpcBase
     {
         try
         {
-            var result = await _scheduler.QueueDialogueJobAsync(
-                request.AgentIdA,
-                request.AgentIdB,
-                request.WaitForCompletion,
-                context.CancellationToken
-            );
+            DialogueSchedulerResult result;
+            if (request.ParticipantIds.Count > 0)
+            {
+                var stringIds = request.ParticipantIds.Select(AgentIdMapping.GetStringId).ToList();
+                result = await _scheduler.QueueGroupDialogueJobAsync(
+                    stringIds,
+                    request.WaitForCompletion,
+                    context.CancellationToken
+                );
+            }
+            else
+            {
+                result = await _scheduler.QueueDialogueJobAsync(
+                    AgentIdMapping.GetStringId(request.AgentIdA),
+                    AgentIdMapping.GetStringId(request.AgentIdB),
+                    request.WaitForCompletion,
+                    context.CancellationToken
+                );
+            }
 
             var response = new TriggerDialogueResponse
             {
@@ -79,7 +118,8 @@ public class MundusVivensGrpcService : MundusVivensGrpc.MundusVivensGrpcBase
     public override Task<GetAgentStatusResponse> GetAgentStatus(GetAgentStatusRequest request, ServerCallContext context)
     {
         var agents = _agentsAccessor();
-        if (!agents.TryGetValue(request.AgentId, out var agent))
+        var agentIdStr = AgentIdMapping.GetStringId(request.AgentId);
+        if (!agents.TryGetValue(agentIdStr, out var agent))
         {
             throw new RpcException(new Status(StatusCode.NotFound, $"ID가 '{request.AgentId}'인 에이전트를 찾을 수 없습니다."));
         }
@@ -102,7 +142,8 @@ public class MundusVivensGrpcService : MundusVivensGrpc.MundusVivensGrpcBase
     public override Task<InjectGossipResponse> InjectGossip(InjectGossipRequest request, ServerCallContext context)
     {
         var agents = _agentsAccessor();
-        if (!agents.TryGetValue(request.TargetAgentId, out var targetAgent))
+        var targetAgentIdStr = AgentIdMapping.GetStringId(request.TargetAgentId);
+        if (!agents.TryGetValue(targetAgentIdStr, out var targetAgent))
         {
             return Task.FromResult(new InjectGossipResponse
             {
@@ -111,10 +152,11 @@ public class MundusVivensGrpcService : MundusVivensGrpc.MundusVivensGrpcBase
             });
         }
 
+        var subjectIdStr = AgentIdMapping.GetStringId(request.SubjectId);
         var gossip = new GossipItem
         {
-            GossipId = $"gossip_{request.SubjectId}_{Guid.NewGuid().ToString().Substring(0, 5)}",
-            Subject = request.SubjectId,
+            GossipId = $"gossip_{subjectIdStr}_{Guid.NewGuid().ToString().Substring(0, 5)}",
+            Subject = subjectIdStr,
             Content = request.Content,
             SourceAgentId = "ExternalGrpc",
             BaseCredibility = 80,
@@ -138,7 +180,8 @@ public class MundusVivensGrpcService : MundusVivensGrpc.MundusVivensGrpcBase
     public override Task<UpdateAgentStatusResponse> UpdateAgentStatus(UpdateAgentStatusRequest request, ServerCallContext context)
     {
         var agents = _agentsAccessor();
-        if (!agents.TryGetValue(request.AgentId, out var agent))
+        var agentIdStr = AgentIdMapping.GetStringId(request.AgentId);
+        if (!agents.TryGetValue(agentIdStr, out var agent))
         {
             return Task.FromResult(new UpdateAgentStatusResponse
             {
@@ -186,7 +229,8 @@ public class MundusVivensGrpcService : MundusVivensGrpc.MundusVivensGrpcBase
 
         foreach (var agentReq in request.Agents)
         {
-            if (!agents.TryGetValue(agentReq.AgentId, out var agent))
+            var agentIdStr = AgentIdMapping.GetStringId(agentReq.AgentId);
+            if (!agents.TryGetValue(agentIdStr, out var agent))
             {
                 Console.WriteLine($"[Warning] BatchUpdate: ID가 '{agentReq.AgentId}'인 에이전트를 찾을 수 없어 건너뜁니다.");
                 continue;
@@ -244,19 +288,8 @@ public class MundusVivensGrpcService : MundusVivensGrpc.MundusVivensGrpcBase
         // 플레이어 잉여 세션(타임아웃) 정리 (약 2분)
         _ = _playerDialogueManager.CleanupIdleSessionsAsync(TimeSpan.FromMinutes(2), context.CancellationToken);
 
-        // 🆕 소문 쇠퇴(Decay) 처리
-        try
-        {
-            var agents = _agentsAccessor();
-            foreach (var agent in agents.Values)
-            {
-                _gossipEngine.ApplyGossipDecay(agent, request.TickNumber);
-            }
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"[Error] 소문 쇠퇴 처리 중 오류 발생: {ex.Message}");
-        }
+        // 🆕 소문 쇠퇴(Decay) 처리: 전역 루프를 제거하고 글로벌 틱 번호만 갱신 (Lazy Decay)
+        _gossipEngine.CurrentTick = request.TickNumber;
 
         // 🆕 23틱 (자정 직전) 검출 시 백그라운드로 성찰 및 스케줄링 태스크 실행
         if (request.TickNumber % 24 == 23)
@@ -276,7 +309,7 @@ public class MundusVivensGrpcService : MundusVivensGrpc.MundusVivensGrpcBase
 
         var busyAgentIds = _agentsAccessor().Values
             .Where(a => a.Status.IsInConversation)
-            .Select(a => a.AgentId)
+            .Select(a => a.NumericId)
             .ToList();
 
         var response = new ProcessWorldTickResponse
@@ -285,6 +318,9 @@ public class MundusVivensGrpcService : MundusVivensGrpc.MundusVivensGrpcBase
             Message = $"틱 {request.TickNumber} 처리가 정상적으로 완료되었습니다."
         };
         response.BusyAgentIds.AddRange(busyAgentIds);
+        
+        var deltas = RelationshipChangeTracker.DrainDeltas();
+        response.RelationshipDeltas.AddRange(deltas);
 
         return Task.FromResult(response);
     }
@@ -334,7 +370,8 @@ public class MundusVivensGrpcService : MundusVivensGrpc.MundusVivensGrpcBase
     {
         try
         {
-            var result = await _playerDialogueManager.StartDialogueAsync(request.PlayerId, request.NpcId, context.CancellationToken);
+            var npcIdStr = AgentIdMapping.GetStringId(request.NpcId);
+            var result = await _playerDialogueManager.StartDialogueAsync(request.PlayerId, npcIdStr, context.CancellationToken);
             return new StartPlayerDialogueResponse
             {
                 Success = result.Success,
@@ -349,7 +386,7 @@ public class MundusVivensGrpcService : MundusVivensGrpc.MundusVivensGrpcBase
             {
                 Success = false,
                 Message = $"플레이어 대화 시작 오류: {ex.Message}",
-                SessionId = string.Empty,
+                SessionId = 0,
                 Greeting = string.Empty
             };
         }
@@ -397,14 +434,27 @@ public class MundusVivensGrpcService : MundusVivensGrpc.MundusVivensGrpcBase
 
         foreach (var kv in agents)
         {
-            response.Agents.Add(new InitialAgentState
+            var agentState = new InitialAgentState
             {
-                AgentId = kv.Value.AgentId,
+                AgentId = kv.Value.NumericId,
                 Name = kv.Value.Persona.Name,
                 Location = kv.Value.Status.CurrentLocation,
                 Emotion = kv.Value.Status.Emotion,
-                Activity = kv.Value.Status.Activity
-            });
+                Activity = kv.Value.Status.Activity,
+                Extroversion = (float)kv.Value.Persona.Extroversion
+            };
+
+            foreach (var relKv in kv.Value.RelationshipMap)
+            {
+                agentState.Relationships.Add(new RelationshipSnapshot
+                {
+                    TargetAgentId = AgentIdMapping.GetNumericId(relKv.Key),
+                    Liking = relKv.Value.Liking,
+                    Trust = relKv.Value.Trust
+                });
+            }
+
+            response.Agents.Add(agentState);
         }
 
         // 인메모리 에이전트의 현재 고유 위치들을 추출하여 반환

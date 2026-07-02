@@ -131,3 +131,45 @@ public class GossipExchangeInfo
     [JsonPropertyName("speaker_id")]
     public string SpeakerId { get; set; } = string.Empty;
 }
+
+public class GroupRelationshipChangeInfo
+{
+    [JsonPropertyName("from")]
+    public string From { get; set; } = string.Empty;
+
+    [JsonPropertyName("to")]
+    public string To { get; set; } = string.Empty;
+
+    [JsonPropertyName("liking_delta")]
+    public int LikingDelta { get; set; } = 0;
+
+    [JsonPropertyName("trust_delta")]
+    public int TrustDelta { get; set; } = 0;
+}
+
+public class GroupDialogueLineInfo
+{
+    [JsonPropertyName("speaker_id")]
+    public string SpeakerId { get; set; } = string.Empty;
+
+    [JsonPropertyName("text")]
+    public string Text { get; set; } = string.Empty;
+}
+
+public class GroupConversationScript
+{
+    [JsonPropertyName("lines")]
+    public List<GroupDialogueLineInfo> Lines { get; set; } = new();
+
+    [JsonPropertyName("summary")]
+    public string Summary { get; set; } = string.Empty;
+
+    [JsonPropertyName("relationship_changes")]
+    public List<GroupRelationshipChangeInfo> RelationshipChanges { get; set; } = new();
+
+    [JsonPropertyName("emotion_updates")]
+    public List<EmotionUpdateInfo> EmotionUpdates { get; set; } = new();
+
+    [JsonPropertyName("gossips_exchanged")]
+    public List<GossipExchangeInfo> GossipsExchanged { get; set; } = new();
+}

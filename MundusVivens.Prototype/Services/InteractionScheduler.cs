@@ -14,23 +14,30 @@ namespace MundusVivens.Prototype.Services;
 
 public class DialogueJob
 {
-    public string JobId { get; } = Guid.NewGuid().ToString("N");
-    public string AgentIdA { get; }
-    public string AgentIdB { get; }
+    private static long _jobIdSequence = 0;
+    public static ulong GenerateJobId() => (ulong)System.Threading.Interlocked.Increment(ref _jobIdSequence);
+
+    public ulong JobId { get; } = GenerateJobId();
+    public List<string> ParticipantIds { get; }
     public bool WaitForCompletion { get; }
     public TaskCompletionSource<DialogueSchedulerResult> CompletionSource { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
+    public DialogueJob(List<string> participantIds, bool waitForCompletion)
+    {
+        ParticipantIds = participantIds;
+        WaitForCompletion = waitForCompletion;
+    }
+
     public DialogueJob(string agentIdA, string agentIdB, bool waitForCompletion)
     {
-        AgentIdA = agentIdA;
-        AgentIdB = agentIdB;
+        ParticipantIds = new List<string> { agentIdA, agentIdB };
         WaitForCompletion = waitForCompletion;
     }
 }
 
 public class DialogueSchedulerResult
 {
-    public string JobId { get; set; } = string.Empty;
+    public ulong JobId { get; set; }
     public bool Success { get; set; }
     public string ErrorMessage { get; set; } = string.Empty;
     public string Summary { get; set; } = string.Empty;
@@ -42,7 +49,7 @@ public class DialogueSchedulerResult
 public class InteractionScheduler : BackgroundService
 {
     private readonly Channel<DialogueJob> _incomingChannel;
-    private readonly List<DialogueJob> _pendingJobs = new();
+    private readonly ConcurrentQueue<DialogueJob> _pendingQueue = new();
     private readonly SemaphoreSlim _globalSemaphore;
     private readonly IDialogueOrchestrator _orchestrator;
     private readonly Func<ConcurrentDictionary<string, AgentInstance>> _agentsAccessor;
@@ -50,7 +57,7 @@ public class InteractionScheduler : BackgroundService
     private readonly IPersistenceService _persistence;
     private readonly ILogger<InteractionScheduler> _logger;
     private readonly object _lock = new();
-    private readonly ConcurrentDictionary<string, (DialogueSchedulerResult Result, DateTime CompletedAt)> _completedResults = new();
+    private readonly ConcurrentDictionary<ulong, (DialogueSchedulerResult Result, DateTime CompletedAt)> _completedResults = new();
 
     public InteractionScheduler(
         IDialogueOrchestrator orchestrator,
@@ -58,7 +65,7 @@ public class InteractionScheduler : BackgroundService
         IWorldEventBroadcaster broadcaster,
         IPersistenceService persistence,
         ILogger<InteractionScheduler> logger,
-        int maxGlobalConcurrent = 2)
+        int maxGlobalConcurrent = 10)
     {
         _orchestrator = orchestrator;
         _agentsAccessor = agentsAccessor;
@@ -77,28 +84,45 @@ public class InteractionScheduler : BackgroundService
 
     public async Task<DialogueSchedulerResult> QueueDialogueJobAsync(string agentIdA, string agentIdB, bool wait, CancellationToken cancellationToken = default)
     {
+        return await QueueGroupDialogueJobAsync(new List<string> { agentIdA, agentIdB }, wait, cancellationToken);
+    }
+
+    public async Task<DialogueSchedulerResult> QueueGroupDialogueJobAsync(List<string> participantIds, bool wait, CancellationToken cancellationToken = default)
+    {
         var agents = _agentsAccessor();
-        if (!agents.ContainsKey(agentIdA) || !agents.ContainsKey(agentIdB))
+        foreach (var pId in participantIds)
+        {
+            if (!agents.ContainsKey(pId))
+            {
+                return new DialogueSchedulerResult
+                {
+                    Success = false,
+                    ErrorMessage = $"존재하지 않는 에이전트 ID입니다: {pId}"
+                };
+            }
+        }
+
+        if (participantIds.Distinct().Count() != participantIds.Count)
         {
             return new DialogueSchedulerResult
             {
                 Success = false,
-                ErrorMessage = "존재하지 않는 에이전트 ID입니다."
+                ErrorMessage = "중복된 에이전트가 포함되어 있습니다."
             };
         }
 
-        if (agentIdA == agentIdB)
+        if (participantIds.Count < 2)
         {
             return new DialogueSchedulerResult
             {
                 Success = false,
-                ErrorMessage = "동일한 에이전트끼리는 대화할 수 없습니다."
+                ErrorMessage = "대화에 참여하려면 최소 2명의 에이전트가 필요합니다."
             };
         }
 
-        var job = new DialogueJob(agentIdA, agentIdB, wait);
+        var job = new DialogueJob(participantIds, wait);
         
-        _logger.LogInformation($"[Scheduler] 대화 등록 요청: {agentIdA} <-> {agentIdB} (wait={wait})");
+        _logger.LogInformation($"[Scheduler] 대화 등록 요청: {string.Join(", ", participantIds)} (wait={wait})");
         await _incomingChannel.Writer.WriteAsync(job, cancellationToken);
 
         if (wait)
@@ -116,19 +140,15 @@ public class InteractionScheduler : BackgroundService
 
     public List<object> GetActiveAndPendingJobs()
     {
-        lock (_lock)
-        {
-            var agents = _agentsAccessor();
-            var activeAgents = agents.Values.Where(a => a.Status.IsInConversation).Select(a => a.AgentId).ToList();
+        var agents = _agentsAccessor();
+        var activeAgents = agents.Values.Where(a => a.Status.IsInConversation).Select(a => a.AgentId).ToList();
 
-            return _pendingJobs.Select(j => new
-            {
-                j.JobId,
-                j.AgentIdA,
-                j.AgentIdB,
-                Status = (activeAgents.Contains(j.AgentIdA) || activeAgents.Contains(j.AgentIdB)) ? "대기 중 (상대 에이전트 바쁨)" : "가용 (대기열 진입 준비 완료)"
-            }).Cast<object>().ToList();
-        }
+        return _pendingQueue.ToArray().Select(j => new
+        {
+            j.JobId,
+            Participants = j.ParticipantIds,
+            Status = j.ParticipantIds.Any(pId => activeAgents.Contains(pId)) ? "대기 중 (상대 에이전트 바쁨)" : "가용 (대기열 진입 준비 완료)"
+        }).Cast<object>().ToList();
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -141,11 +161,8 @@ public class InteractionScheduler : BackgroundService
             {
                 await foreach (var job in _incomingChannel.Reader.ReadAllAsync(stoppingToken))
                 {
-                    lock (_lock)
-                    {
-                        _pendingJobs.Add(job);
-                    }
-                    _logger.LogInformation($"[Scheduler] 새 작업 큐 추가: {job.JobId}. 대기 개수: {_pendingJobs.Count}");
+                    _pendingQueue.Enqueue(job);
+                    _logger.LogInformation($"[Scheduler] 새 작업 큐 추가: {job.JobId}. 대기 개수: {_pendingQueue.Count}");
                     
                     TriggerScheduling();
                 }
@@ -181,37 +198,52 @@ public class InteractionScheduler : BackgroundService
     {
         lock (_lock)
         {
-            if (_pendingJobs.Count == 0) return;
+            if (_pendingQueue.IsEmpty) return;
 
             var agents = _agentsAccessor();
-            
-            for (int i = 0; i < _pendingJobs.Count; i++)
-            {
-                var job = _pendingJobs[i];
-                var agentA = agents[job.AgentIdA];
-                var agentB = agents[job.AgentIdB];
+            var skippedJobs = new List<DialogueJob>();
 
-                if (agentA.Status.IsInConversation || agentB.Status.IsInConversation)
+            while (_pendingQueue.TryDequeue(out var job))
+            {
+                // Check if all participants are free
+                bool anyBusy = false;
+                foreach (var pId in job.ParticipantIds)
                 {
+                    if (!agents.TryGetValue(pId, out var agent) || agent.Status.IsInConversation)
+                    {
+                        anyBusy = true;
+                        break;
+                    }
+                }
+
+                if (anyBusy)
+                {
+                    skippedJobs.Add(job);
                     continue;
                 }
 
                 if (_globalSemaphore.Wait(0))
                 {
-                    agentA.Status.IsInConversation = true;
-                    agentB.Status.IsInConversation = true;
-                    agentA.Status.Activity = $"{agentB.Persona.Name}와(과) 대화 중";
-                    agentB.Status.Activity = $"{agentA.Persona.Name}와(과) 대화 중";
-
-                    _pendingJobs.RemoveAt(i);
-                    i--;
+                    // Set all participants to busy
+                    foreach (var pId in job.ParticipantIds)
+                    {
+                        var agent = agents[pId];
+                        agent.Status.IsInConversation = true;
+                        agent.Status.Activity = "대화 중";
+                    }
 
                     _ = Task.Run(async () =>
                     {
-                        _logger.LogInformation($"[Scheduler] 대화 실행 시작: Job {job.JobId} ({agentA.Persona.Name} <-> {agentB.Persona.Name})");
+                        _logger.LogInformation($"[Scheduler] 대화 실행 시작: Job {job.JobId} ({string.Join(", ", job.ParticipantIds)})");
                         try
                         {
-                            agentB.Status.CurrentLocation = agentA.Status.CurrentLocation;
+                            // Teleport other participants to the first participant's location
+                            var primaryAgent = agents[job.ParticipantIds[0]];
+                            for (int i = 1; i < job.ParticipantIds.Count; i++)
+                            {
+                                var otherAgent = agents[job.ParticipantIds[i]];
+                                otherAgent.Status.CurrentLocation = primaryAgent.Status.CurrentLocation;
+                            }
 
                             // 1. 대화 시작 이벤트 브로드캐스트
                             var startEvent = new MundusVivens.Prototype.Protos.WorldEvent
@@ -220,15 +252,26 @@ public class InteractionScheduler : BackgroundService
                                 Dialogue = new MundusVivens.Prototype.Protos.DialogueEvent
                                 {
                                     TaskId = job.JobId,
-                                    AgentAId = job.AgentIdA,
-                                    AgentBId = job.AgentIdB,
-                                    Location = agentA.Status.CurrentLocation,
+                                    AgentAId = AgentIdMapping.GetNumericId(job.ParticipantIds[0]),
+                                    AgentBId = job.ParticipantIds.Count > 1 ? AgentIdMapping.GetNumericId(job.ParticipantIds[1]) : 0,
+                                    Location = primaryAgent.Status.CurrentLocation,
                                     IsStarted = true
                                 }
                             };
+                            startEvent.Dialogue.ParticipantIds.AddRange(job.ParticipantIds.Select(AgentIdMapping.GetNumericId));
                             await _broadcaster.BroadcastAsync(startEvent);
 
-                            var result = await _orchestrator.RunConversationAsync(agentA, agentB, job.JobId);
+                            // Run conversation: if 2 agents, use original. If more, use group
+                            DialogueResult result;
+                            if (job.ParticipantIds.Count == 2)
+                            {
+                                result = await _orchestrator.RunConversationAsync(agents[job.ParticipantIds[0]], agents[job.ParticipantIds[1]], job.JobId);
+                            }
+                            else
+                            {
+                                var participantsList = job.ParticipantIds.Select(pId => agents[pId]).ToList();
+                                result = await _orchestrator.RunGroupConversationAsync(participantsList, job.JobId);
+                            }
                             
                             var schedulerResult = new DialogueSchedulerResult
                             {
@@ -250,13 +293,14 @@ public class InteractionScheduler : BackgroundService
                                 Dialogue = new MundusVivens.Prototype.Protos.DialogueEvent
                                 {
                                     TaskId = job.JobId,
-                                    AgentAId = job.AgentIdA,
-                                    AgentBId = job.AgentIdB,
-                                    Location = agentA.Status.CurrentLocation,
+                                    AgentAId = AgentIdMapping.GetNumericId(job.ParticipantIds[0]),
+                                    AgentBId = job.ParticipantIds.Count > 1 ? AgentIdMapping.GetNumericId(job.ParticipantIds[1]) : 0,
+                                    Location = primaryAgent.Status.CurrentLocation,
                                     IsStarted = false,
                                     Summary = result.Summary
                                 }
                             };
+                            endEvent.Dialogue.ParticipantIds.AddRange(job.ParticipantIds.Select(AgentIdMapping.GetNumericId));
                             foreach (var line in result.StructuredLines)
                             {
                                 endEvent.Dialogue.Lines.Add(line);
@@ -278,20 +322,22 @@ public class InteractionScheduler : BackgroundService
                         }
                         finally
                         {
-                            agentA.Status.IsInConversation = false;
-                            agentB.Status.IsInConversation = false;
-                            agentA.Status.Activity = "대기 중";
-                            agentB.Status.Activity = "대기 중";
+                            foreach (var pId in job.ParticipantIds)
+                            {
+                                if (agents.TryGetValue(pId, out var agent))
+                                {
+                                    agent.Status.IsInConversation = false;
+                                    agent.Status.Activity = "대기 중";
 
-                            try
-                            {
-                                // DB에 에이전트 상태 비동기 영구 저장 (Write-Behind)
-                                _persistence.UpsertAgent(agentA);
-                                _persistence.UpsertAgent(agentB);
-                            }
-                            catch (Exception ex)
-                            {
-                                _logger.LogError(ex, $"[Scheduler] DB 저장 중 에러 발생: {agentA.AgentId}, {agentB.AgentId}");
+                                    try
+                                    {
+                                        _persistence.UpsertAgent(agent);
+                                    }
+                                    catch (Exception ex)
+                                    {
+                                        _logger.LogError(ex, $"[Scheduler] DB 저장 중 에러 발생: {agent.AgentId}");
+                                    }
+                                }
                             }
 
                             _globalSemaphore.Release();
@@ -303,14 +349,21 @@ public class InteractionScheduler : BackgroundService
                 }
                 else
                 {
-                    _logger.LogWarning($"[Scheduler] 글로벌 실행 한도 초과로 작업을 연기합니다. 대기 중인 작업 개수: {_pendingJobs.Count}");
+                    _logger.LogWarning($"[Scheduler] 글로벌 실행 한도 초과로 작업을 연기합니다. 대기 중인 작업 개수: {skippedJobs.Count + 1}");
+                    skippedJobs.Add(job);
                     break;
                 }
+            }
+
+            // Re-enqueue skipped jobs
+            foreach (var job in skippedJobs)
+            {
+                _pendingQueue.Enqueue(job);
             }
         }
     }
 
-    public bool TryGetCompletedResult(string jobId, out DialogueSchedulerResult? result)
+    public bool TryGetCompletedResult(ulong jobId, out DialogueSchedulerResult? result)
     {
         if (_completedResults.TryGetValue(jobId, out var cached))
         {

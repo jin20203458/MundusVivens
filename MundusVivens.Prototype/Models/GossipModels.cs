@@ -21,7 +21,8 @@ public class KnownGossip
     public string DirectInformantAgentId { get; set; } = string.Empty; // 직전 유포자 (누가 말해주었는가)
     public List<string> PropagationPath { get; set; } = new();         // 누적 전파 경로 (A ➔ B ➔ C)
 
-    // 🆕 소문 쇠퇴 추적용 타임스탬프
+    // 🆕 소문 쇠퇴 추적용 타임스탬프 및 틱 번호
     public DateTime AcquiredAt { get; set; } = DateTime.UtcNow;        // 최초 획득 시각
     public DateTime LastReinforcedAt { get; set; } = DateTime.UtcNow;   // 마지막 재확인 시각
+    public int LastDecayedAtTick { get; set; } = 0;                     // 마지막 쇠퇴 계산이 수행된 틱 번호
 }

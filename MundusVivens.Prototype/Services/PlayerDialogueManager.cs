@@ -12,9 +12,9 @@ namespace MundusVivens.Prototype.Services
 {
     public interface IPlayerDialogueManager
     {
-        Task<(bool Success, string Message, string SessionId, string Greeting)> StartDialogueAsync(string playerId, string npcId, CancellationToken cancellationToken = default);
-        Task<string> SendMessageAsync(string sessionId, string messageText, CancellationToken cancellationToken = default);
-        Task<(bool Success, string Summary)> EndDialogueAsync(string sessionId, CancellationToken cancellationToken = default);
+        Task<(bool Success, string Message, ulong SessionId, string Greeting)> StartDialogueAsync(string playerId, string npcId, CancellationToken cancellationToken = default);
+        Task<string> SendMessageAsync(ulong sessionId, string messageText, CancellationToken cancellationToken = default);
+        Task<(bool Success, string Summary)> EndDialogueAsync(ulong sessionId, CancellationToken cancellationToken = default);
         Task CleanupIdleSessionsAsync(TimeSpan idleTimeout, CancellationToken cancellationToken = default);
     }
 
@@ -29,7 +29,7 @@ namespace MundusVivens.Prototype.Services
 
         private readonly IPersistenceService _persistence;
 
-        private readonly ConcurrentDictionary<string, PlayerDialogueSession> _activeSessions = new();
+        private readonly ConcurrentDictionary<ulong, PlayerDialogueSession> _activeSessions = new();
 
         public PlayerDialogueManager(
             IGeminiApiService apiService,
@@ -49,22 +49,22 @@ namespace MundusVivens.Prototype.Services
             _persistence = persistence;
         }
 
-        public async Task<(bool Success, string Message, string SessionId, string Greeting)> StartDialogueAsync(string playerId, string npcId, CancellationToken cancellationToken = default)
+        public async Task<(bool Success, string Message, ulong SessionId, string Greeting)> StartDialogueAsync(string playerId, string npcId, CancellationToken cancellationToken = default)
         {
             var agents = _agentsAccessor();
             if (!agents.TryGetValue(playerId, out var player) || !agents.TryGetValue(npcId, out var npc))
             {
-                return (false, "에이전트를 찾을 수 없습니다.", string.Empty, string.Empty);
+                return (false, "에이전트를 찾을 수 없습니다.", 0, string.Empty);
             }
 
             if (npc.Status.IsInConversation)
             {
-                return (false, $"{npc.Persona.Name}은(는) 현재 다른 대화 중이어서 대화할 수 없습니다.", string.Empty, string.Empty);
+                return (false, $"{npc.Persona.Name}은(는) 현재 다른 대화 중이어서 대화할 수 없습니다.", 0, string.Empty);
             }
 
             if (player.Status.IsInConversation)
             {
-                return (false, "플레이어가 이미 대화 진행 중입니다.", string.Empty, string.Empty);
+                return (false, "플레이어가 이미 대화 진행 중입니다.", 0, string.Empty);
             }
 
             // Lock the agents
@@ -83,8 +83,8 @@ namespace MundusVivens.Prototype.Services
                 Dialogue = new DialogueEvent
                 {
                     TaskId = session.SessionId,
-                    AgentAId = playerId,
-                    AgentBId = npcId,
+                    AgentAId = player.NumericId,
+                    AgentBId = npc.NumericId,
                     Location = npc.Status.CurrentLocation,
                     IsStarted = true
                 }
@@ -130,37 +130,42 @@ namespace MundusVivens.Prototype.Services
 
             Console.WriteLine($"📋 [소문 압축] {npc.Persona.Name}: {npc.KnownGossips.Count} -> {sortedGossips.Count}개 선별 (플레이어 대화 시작)");
 
-            string systemPrompt = $@"당신은 가상 세계 시뮬레이션의 NPC [{npc.Persona.Name}]입니다. 주어진 페르소나와 대화 상대에 대한 기억을 바탕으로 첫 대면 인사를 건네십시오.
- 
+            string systemPrompt = $$"""
+<role>가상 세계 시뮬레이션 NPC [{{npc.Persona.Name}}]</role>
+<task>주어진 페르소나와 대화 상대에 대한 기억을 바탕으로 첫 대면 인사를 건네십시오.</task>
+
+<context>
 [내 페르소나]
-- 이름/직업: {npc.Persona.Name} / {npc.Persona.Job}
-- 성격/말투: {npc.Persona.ToneStyle}
-- 배경 이야기: {npc.Persona.Backstory}
-- 핵심 가치관: {npc.Persona.CoreValues}
+- 이름/직업: {{npc.Persona.Name}} / {{npc.Persona.Job}}
+- 성격/말투: {{npc.Persona.ToneStyle}}
+- 배경 이야기: {{npc.Persona.Backstory}}
+- 핵심 가치관: {{npc.Persona.CoreValues}}
 
 [대화 상대방 정보]
-- 이름/직업: {player.Persona.Name} / {player.Persona.Job}
-- 상대에 대한 나의 태도: 호감도 {rel.Liking}/100, 신뢰도 {rel.Trust}/100
+- 이름/직업: {{player.Persona.Name}} / {{player.Persona.Job}}
+- 상대에 대한 나의 태도: 호감도 {{rel.Liking}}/100, 신뢰도 {{rel.Trust}}/100
 
 [내가 알고 있는 소문 목록 (최대 3개 선별)]
-{knownGossipsStr}
+{{knownGossipsStr}}
 
 [기억 및 상황 맥락]
 <relevant_memories>
-{relevantMemoriesStr}
+{{relevantMemoriesStr}}
 </relevant_memories>
 
 <current_situation>
-- 현재 위치: {npc.Status.CurrentLocation}
-- 나의 감정 상태: {npc.Status.Emotion}
-- 화두가 될 수 있는 소문: {gossipSnippet}
+- 현재 위치: {{npc.Status.CurrentLocation}}
+- 나의 감정 상태: {{npc.Status.Emotion}}
+- 화두가 될 수 있는 소문: {{gossipSnippet}}
 </current_situation>
+</context>
 
-[대화 규칙]
-1. AI 메타성 발언(인사말, 상황 설명, 해설)을 절대 하지 마십시오.
-2. 오직 대사("" "")와 캐릭터의 행동 묘사만 출력하십시오.
-3. 주어진 말투와 감정 상태를 철저히 고수하십시오.
-4. 첫 인사 한 줄만 출력하십시오. (최대 2문장 이내)";
+<rules>
+1. 대화 시나리오처럼 오직 캐릭터의 대사(" ")와 짧은 행동 묘사만 출력하십시오. (해설, 인사말 포맷 등 불필요한 텍스트 배제)
+2. 주어진 캐릭터의 말투와 감정 상태를 철저히 반영하여 연기하십시오.
+3. 첫 인사 한 줄만 출력하십시오. (최대 2문장 이내)
+</rules>
+""";
 
             var request = new GeminiRequest(
                 SystemInstruction: new Content("system", new List<Part> { new Part(systemPrompt) }),
@@ -176,7 +181,7 @@ namespace MundusVivens.Prototype.Services
             return (true, string.Empty, session.SessionId, greeting);
         }
 
-        public async Task<string> SendMessageAsync(string sessionId, string messageText, CancellationToken cancellationToken = default)
+        public async Task<string> SendMessageAsync(ulong sessionId, string messageText, CancellationToken cancellationToken = default)
         {
             if (!_activeSessions.TryGetValue(sessionId, out var session))
             {
@@ -234,38 +239,45 @@ namespace MundusVivens.Prototype.Services
 
             Console.WriteLine($"📋 [소문 압축] {npc.Persona.Name}: {npc.KnownGossips.Count} -> {sortedGossips.Count}개 선별 (플레이어 메시지 전송)");
 
-            string systemPrompt = $@"당신은 가상 세계 시뮬레이션의 NPC [{npc.Persona.Name}]입니다. 주어진 페르소나와 대화 상대에 대한 기억, 그리고 대화 내역을 바탕으로 답변을 완성하십시오.
- 
+            string summarySection = session.ConversationSummary != string.Empty ? $"\n[이전 대화 요약]\n{session.ConversationSummary}\n" : string.Empty;
+            string systemPrompt = $$"""
+<role>가상 세계 시뮬레이션 NPC [{{npc.Persona.Name}}]</role>
+<task>주어진 페르소나, 대화 상대에 대한 기억, 그리고 이전 대화 내역을 바탕으로 상대의 말에 적절한 답변을 완성하십시오.</task>
+
+<context>
+{{summarySection}}
 [내 페르소나]
-- 이름/직업: {npc.Persona.Name} / {npc.Persona.Job}
-- 성격/말투: {npc.Persona.ToneStyle}
-- 배경 이야기: {npc.Persona.Backstory}
-- 핵심 가치관: {npc.Persona.CoreValues}
+- 이름/직업: {{npc.Persona.Name}} / {{npc.Persona.Job}}
+- 성격/말투: {{npc.Persona.ToneStyle}}
+- 배경 이야기: {{npc.Persona.Backstory}}
+- 핵심 가치관: {{npc.Persona.CoreValues}}
 
 [대화 상대방 정보]
-- 이름/직업: {player.Persona.Name} / {player.Persona.Job}
-- 상대에 대한 나의 태도: 호감도 {rel.Liking}/100, 신뢰도 {rel.Trust}/100
+- 이름/직업: {{player.Persona.Name}} / {{player.Persona.Job}}
+- 상대에 대한 나의 태도: 호감도 {{rel.Liking}}/100, 신뢰도 {{rel.Trust}}/100
 
 [내가 알고 있는 소문 목록 (최대 3개 선별)]
-{knownGossipsStr}
+{{knownGossipsStr}}
 
 [기억 및 상황 맥락]
 <relevant_memories>
-{relevantMemoriesStr}
+{{relevantMemoriesStr}}
 </relevant_memories>
 
 <current_situation>
-- 현재 위치: {npc.Status.CurrentLocation}
-- 나의 감정 상태: {npc.Status.Emotion}
-- 화두가 될 수 있는 소문: {gossipSnippet}
+- 현재 위치: {{npc.Status.CurrentLocation}}
+- 나의 감정 상태: {{npc.Status.Emotion}}
+- 화두가 될 수 있는 소문: {{gossipSnippet}}
 </current_situation>
+</context>
 
-[대화 규칙]
-1. AI 메타성 발언(인사말, 상황 설명, 해설)을 절대 하지 마십시오.
-2. 오직 대사("" "")와 캐릭터의 행동 묘사만 출력하십시오.
-3. 주어진 말투와 감정 상태를 철저히 고수하십시오.
-4. 한 번의 호출에 한 줄의 대사만 출력하십시오. (최대 2문장 이내)
-5. 절대로 플레이어의 역할까지 대필하여 출력하지 마십시오.";
+<rules>
+1. 오직 캐릭터의 대사(" ")와 짧은 행동 묘사만 출력하십시오. (해설, 상황 설명 등 텍스트 배제)
+2. 주어진 캐릭터의 말투와 감정 상태를 철저히 반영하여 연기하십시오.
+3. 한 번의 호출에 단 한 줄의 대사(최대 2문장 이내)만 출력하십시오.
+4. 오직 내 캐릭터의 반응만 작성하고, 다음 행동이나 대사는 플레이어의 턴에 맡기십시오.
+</rules>
+""";
 
             // 대화 이력 빌드
             var contents = new List<Content>();
@@ -289,7 +301,7 @@ namespace MundusVivens.Prototype.Services
             return reply;
         }
 
-        public async Task<(bool Success, string Summary)> EndDialogueAsync(string sessionId, CancellationToken cancellationToken = default)
+        public async Task<(bool Success, string Summary)> EndDialogueAsync(ulong sessionId, CancellationToken cancellationToken = default)
         {
             if (!_activeSessions.TryRemove(sessionId, out var session))
             {
@@ -306,43 +318,49 @@ namespace MundusVivens.Prototype.Services
             }));
 
             // Gemini 사후 분석 요청
-            string postProcessSystemPrompt = $@"당신은 두 NPC 간의 대화 내용을 분석하고 관계 변화 및 전파된 소문을 기록하는 월드 관리인입니다.
-다음 대화를 객관적으로 분석하여 지정된 JSON 구조로만 출력하십시오.
+            string postProcessSystemPrompt = $$"""
+<role>월드 관리인 (대화 분석 시스템)</role>
+<task>두 에이전트 간의 대화 내용을 분석하여 관계 변화 및 전파된 소문 정보를 기록하십시오.</task>
 
+<context>
 [대화 참여자]
-- 에이전트 A: {player.Persona.Name} (ID: {player.AgentId})
-- 에이전트 B: {npc.Persona.Name} (ID: {npc.AgentId})
+- 에이전트 A: {{player.Persona.Name}} (ID: {{player.NumericId}})
+- 에이전트 B: {{npc.Persona.Name}} (ID: {{npc.NumericId}})
 
 [소문 후보 목록]
-{string.Join("\n", npc.KnownGossips.Values.Select(kg => $"- [{kg.Gossip.GossipId}] {kg.Gossip.Subject}에 관한 소문: \"{kg.Gossip.Content}\""))}
+{{string.Join("\n", npc.KnownGossips.Values.Select(kg => $"- [{kg.Gossip.GossipId}] {kg.Gossip.Subject}에 관한 소문: \"{kg.Gossip.Content}\""))}}
 
 [대화 원본]
 <chat_log>
-{rawHistory}
+{{rawHistory}}
 </chat_log>
+</context>
 
-[분석 규칙]
+<rules>
 1. summary: 대화 요약을 3인칭 소설 기술처럼 작성하되, 수치(골드, 수치 스탯 등)는 배제하고 1문장으로 요약하십시오.
 2. relationship_changes: 대화 내용을 바탕으로 서로에 대한 호감도(liking)와 신뢰도(trust) 변화량을 -10에서 +10 사이 정수값(delta)으로 산출하십시오. 친화적이면 +, 다툼/불신이 커지면 -입니다.
 3. gossips_exchanged: 대화 중 소문이나 특정 정보가 전파되었는지 분석하십시오.
-   - gossip_id: 위 [소문 후보 목록] 중에서, 대화 중 실제로 전파(발설)된 소문의 '소문 ID'를 찾아 정확히 기입하십시오. 만약 후보 목록에 매칭되는 소문이 없는 새로운 소문일 경우, 임의로 ID를 생성하지 말고 빈 문자열("""")로 두십시오.
-   - subject: 소문의 대상이 된 인물의 AgentId (예: 'npc_kyle' 또는 'npc_bart' 또는 'npc_eva'). 대화에서 해당 대상이 직접 지목된 경우에만 추출하십시오.
-   - content: 대화 중 발설된 소문의 핵심 요약 내용 (예: '성물을 훔쳤다')
-   - credibility_rating: 들려온 이야기에 대해 화자가 보인 신빙성 정도 (0 ~ 100)
-   - speaker_id: 소문을 말한 화자의 AgentId
+   - gossip_id: 위 [소문 후보 목록] 중에서, 대화 중 실제로 전파(발설)된 소문의 '소문 ID'를 찾아 기입하십시오. 매칭되는 소문이 없는 새로운 소문일 경우 빈 문자열("")로 기입하십시오.
+   - subject: 소문의 대상이 된 인물의 AgentId (예: 'npc_kyle'). 대화에서 해당 대상이 직접 지목된 경우에만 추출하십시오.
+   - content: 대화 중 발설된 소문의 핵심 요약 내용.
+   - credibility_rating: 들려온 이야기에 대해 화자가 보인 신빙성 정도 (0 ~ 100).
+   - speaker_id: 소문을 말한 화자의 AgentId.
+4. 분석 결과는 오직 아래 지정된 JSON 포맷으로만 출력하십시오.
+</rules>
 
-[출력 포맷]
-{{
-  ""summary"": ""에이전트 A와 B가 안부를 주고받으며 일상 대화를 나눴습니다."",
-  ""relationship_changes"": {{
-    ""liking_delta_a_to_b"": 0,
-    ""trust_delta_a_to_b"": 0,
-    ""liking_delta_b_to_a"": 0,
-    ""trust_delta_b_to_a"": 0
-  }},
-  ""gossips_exchanged"": []
-}}
-";
+<output_format>
+{
+  "summary": "에이전트 A와 B가 안부를 주고받으며 일상 대화를 나눴습니다.",
+  "relationship_changes": {
+    "liking_delta_a_to_b": 0,
+    "trust_delta_a_to_b": 0,
+    "liking_delta_b_to_a": 0,
+    "trust_delta_b_to_a": 0
+  },
+  "gossips_exchanged": []
+}
+</output_format>
+""";
 
             var postRequest = new GeminiRequest(
                 SystemInstruction: new Content("system", new List<Part> { new Part(postProcessSystemPrompt) }),
@@ -386,9 +404,11 @@ namespace MundusVivens.Prototype.Services
 
                 relPlayerToNpc.Liking = Math.Clamp(relPlayerToNpc.Liking + likingDeltaAToB, -100, 100);
                 relPlayerToNpc.Trust = Math.Clamp(relPlayerToNpc.Trust + trustDeltaAToB, 0, 100);
+                RelationshipChangeTracker.TrackChange(player.NumericId, npc.NumericId, relPlayerToNpc.Liking, relPlayerToNpc.Trust);
 
                 relNpcToPlayer.Liking = Math.Clamp(relNpcToPlayer.Liking + likingDeltaBToA, -100, 100);
                 relNpcToPlayer.Trust = Math.Clamp(relNpcToPlayer.Trust + trustDeltaBToA, 0, 100);
+                RelationshipChangeTracker.TrackChange(npc.NumericId, player.NumericId, relNpcToPlayer.Liking, relNpcToPlayer.Trust);
 
                 // 관계 변동 브로드캐스트
                 var relEventAToB = new WorldEvent
@@ -396,8 +416,8 @@ namespace MundusVivens.Prototype.Services
                     Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
                     Relationship = new RelationshipEvent
                     {
-                        FromAgentId = player.AgentId,
-                        ToAgentId = npc.AgentId,
+                        FromAgentId = player.NumericId,
+                        ToAgentId = npc.NumericId,
                         NewAffinity = relPlayerToNpc.Liking,
                         AffinityDelta = likingDeltaAToB,
                         NewTrust = relPlayerToNpc.Trust,
@@ -411,8 +431,8 @@ namespace MundusVivens.Prototype.Services
                     Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
                     Relationship = new RelationshipEvent
                     {
-                        FromAgentId = npc.AgentId,
-                        ToAgentId = player.AgentId,
+                        FromAgentId = npc.NumericId,
+                        ToAgentId = player.NumericId,
                         NewAffinity = relNpcToPlayer.Liking,
                         AffinityDelta = likingDeltaBToA,
                         NewTrust = relNpcToPlayer.Trust,
@@ -517,9 +537,9 @@ namespace MundusVivens.Prototype.Services
                             Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
                             Gossip = new GossipEvent
                             {
-                                SpeakerId = speaker.AgentId,
-                                ListenerId = listener.AgentId,
-                                SubjectId = originalGossip.Subject,
+                                SpeakerId = speaker.NumericId,
+                                ListenerId = listener.NumericId,
+                                SubjectId = AgentIdMapping.GetNumericId(originalGossip.Subject),
                                 GossipContent = content,
                                 IsMutated = isMutated
                             }
@@ -549,7 +569,7 @@ namespace MundusVivens.Prototype.Services
             // 대화 종료 이벤트 브로드캐스트
             var structuredLines = session.ConversationHistory.Select(m => new DialogueLine
             {
-                SpeakerId = m.Role,
+                SpeakerId = AgentIdMapping.GetNumericId(m.Role),
                 SpeakerName = m.Role == player.AgentId ? player.Persona.Name : npc.Persona.Name,
                 Text = m.Text
             }).ToList();
@@ -560,8 +580,8 @@ namespace MundusVivens.Prototype.Services
                 Dialogue = new DialogueEvent
                 {
                     TaskId = session.SessionId,
-                    AgentAId = session.PlayerId,
-                    AgentBId = session.NpcId,
+                    AgentAId = player.NumericId,
+                    AgentBId = npc.NumericId,
                     Location = npc.Status.CurrentLocation,
                     IsStarted = false,
                     Summary = summary
@@ -609,6 +629,9 @@ namespace MundusVivens.Prototype.Services
         /// </summary>
         private List<KnownGossip> ComputeTopKGossips(AgentInstance speaker, AgentInstance listener, int k = 3)
         {
+            _gossipEngine.DecayAgentGossips(speaker, _gossipEngine.CurrentTick);
+            _gossipEngine.DecayAgentGossips(listener, _gossipEngine.CurrentTick);
+
             return speaker.KnownGossips.Values
                 .Select(kg => {
                     double score = kg.SubjectiveBelief; // 기본 확신도 (0.0 ~ 1.0)

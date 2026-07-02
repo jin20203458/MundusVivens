@@ -62,7 +62,7 @@ public class DailyPlanService : IDailyPlanService
 
             var dailySchedule = new DailySchedule
             {
-                AgentId = kvp.Key
+                AgentId = AgentIdMapping.GetNumericId(kvp.Key)
             };
             dailySchedule.Items.AddRange(kvp.Value);
             response.Schedules.Add(dailySchedule);
@@ -123,32 +123,40 @@ public class DailyPlanService : IDailyPlanService
 
         string episodesList = string.Join("\n", episodes.Select(e => $"- [{e.Timestamp:HH:mm}] {e.TargetName}과의 대화 요약: {e.Summary}"));
 
-        string prompt = $@"당신은 가상 세계의 NPC [{agent.Persona.Name}]의 자아성찰(Reflection) 시스템입니다.
-오늘 하루 동안 겪은 일(단기 기억 에피소드들)을 바탕으로, 이 NPC가 깊이 깨닫거나 가치관에 반영할 장기 기억(CoreFact) 1~2개를 중요도와 함께 추출하십시오.
-각 장기 기억은 NPC의 페르소나, 핵심 가치관, Faction(진영) 및 에피소드를 종합적으로 분석하여 작성되어야 합니다.
+        string prompt = $$"""
+<role>가상 세계 NPC [{{agent.Persona.Name}}]의 자아성찰(Reflection) 시스템</role>
+<task>오늘 하루 동안 겪은 에피소드들을 분석하여, 캐릭터의 장기 기억(CoreFact)을 추출하십시오.</task>
 
+<rules>
+1. 오늘 겪은 단기 에피소드들을 종합하여 NPC가 깊이 깨닫거나 가치관에 반영할 장기 기억을 1~2개 도출하십시오.
+2. 각 장기 기억은 NPC의 페르소나, 핵심 가치관, Faction(진영) 및 에피소드를 종합적으로 분석하여 작성되어야 합니다.
+3. 다른 마크다운이나 텍스트를 절대 포함하지 말고 오직 JSON만 출력하십시오.
+</rules>
+
+<context>
 [NPC 페르소나]
-- 이름/직업: {agent.Persona.Name} / {agent.Persona.Job}
-- Faction: {agent.Persona.Faction}
-- 성격/말투: {agent.Persona.ToneStyle}
-- 배경 이야기: {agent.Persona.Backstory}
-- 핵심 가치관: {agent.Persona.CoreValues}
+- 이름/직업: {{agent.Persona.Name}} / {{agent.Persona.Job}}
+- Faction: {{agent.Persona.Faction}}
+- 성격/말투: {{agent.Persona.ToneStyle}}
+- 배경 이야기: {{agent.Persona.Backstory}}
+- 핵심 가치관: {{agent.Persona.CoreValues}}
 
 [오늘 하루 동안 겪은 에피소드]
-{episodesList}
+{{episodesList}}
+</context>
 
-[출력 형식]
-JSON 형식으로만 대답하십시오. 다른 마크다운이나 텍스트를 포함하지 마십시오.
-출력 스키마:
-{{
-  ""core_facts"": [
-    {{
-      ""content"": ""장기 기억 요약 내용 (예: 카일과 나눈 술집 대화를 통해 성당 세력이 마을에 뭔가 수상한 움직임을 보이고 있음을 확신했다)"",
-      ""importance"": 7
-    }}
+<output_format>
+반드시 아래 JSON 스키마를 충실히 준수하는 순수 JSON만 반환하십시오.
+{
+  "core_facts": [
+    {
+      "content": "장기 기억 내용 (예: Eva가 나에게 거짓말을 했다는 사실을 알았고, 그녀를 더 이상 신뢰할 수 없다)",
+      "importance": 8
+    }
   ]
-}}
-";
+}
+</output_format>
+""";
 
         var request = new GeminiRequest(
             SystemInstruction: new Content("system", new List<Part> { new Part(prompt) }),
@@ -195,10 +203,20 @@ JSON 형식으로만 대답하십시오. 다른 마크다운이나 텍스트를 
             ? string.Join("\n", agent.MemoryBox.CoreMemories.Select(cf => $"- {cf.Content} (중요도: {cf.Importance})"))
             : "마음에 간직하고 있는 특별한 장기 기억이 없습니다.";
 
-        string prompt = $@"당신은 가상 세계의 NPC [{agent.Persona.Name}]의 하루 계획(Daily Schedule) 수립 시스템입니다.
-이 NPC의 페르소나, Faction, 현재 감정 상태, 관계도, 장기 기억(CoreFact)들을 고려하여 내일 하루(0시부터 23시까지 총 24시간) 동안의 구체적인 일정을 짜주십시오.
-각 일정은 시작 시간, 종료 시간, 목표 장소, 해당 장소에서 할 구체적인 행동(Activity)을 포함해야 합니다.
+        string prompt = $$"""
+<role>NPC [{{agent.Persona.Name}}]의 하루 계획(Daily Schedule) 수립 시스템</role>
+<task>NPC의 페르소나, 현재 상태, 관계도, 장기 기억을 고려하여 내일 하루(0시~23시) 동안의 구체적인 일정을 짜주십시오.</task>
 
+<rules>
+1. 0시부터 23시까지의 일정이 빈 틈 없이 연속적이어야 합니다. (예: 0~7, 7~10, 10~15, 15~18, 18~22, 22~23)
+2. NPC의 직업과 Faction(진영), 대화 상대들과의 관계를 일정에 자연스럽게 녹여내십시오. 
+3. 목표 장소(target_location)는 반드시 [이동 가능한 장소 목록] 중 하나여야 합니다. (정확히 일치 필수)
+4. 24시간 계획을 3~6개의 시간대로 나누어 짜주십시오. 시작 시간과 종료 시간은 반드시 정수(0~23)여야 합니다.
+5. 각 일정은 시작 시간, 종료 시간, 목표 장소, 해당 장소에서 할 구체적인 행동(activity)을 포함해야 합니다.
+6. 다른 마크다운이나 텍스트를 포함하지 마십시오.
+</rules>
+
+<context>
 [이동 가능한 장소 목록]
 - 영주 저택 (Manor)
 - 성당 (Church)
@@ -210,45 +228,39 @@ JSON 형식으로만 대답하십시오. 다른 마크다운이나 텍스트를 
 - 술집 (Tavern)
 
 [NPC 페르소나]
-- 이름/직업: {agent.Persona.Name} / {agent.Persona.Job}
-- Faction: {agent.Persona.Faction}
-- 성격: {agent.Persona.ToneStyle}
-- 배경 이야기: {agent.Persona.Backstory}
-- 핵심 가치관: {agent.Persona.CoreValues}
+- 이름/직업: {{agent.Persona.Name}} / {{agent.Persona.Job}}
+- Faction: {{agent.Persona.Faction}}
+- 성격: {{agent.Persona.ToneStyle}}
+- 배경 이야기: {{agent.Persona.Backstory}}
+- 핵심 가치관: {{agent.Persona.CoreValues}}
 
 [현재 감정 및 상태]
-- 감정: {agent.Status.Emotion}
-- 현재 위치: {agent.Status.CurrentLocation}
+- 감정: {{agent.Status.Emotion}}
+- 현재 위치: {{agent.Status.CurrentLocation}}
 
 [기억하는 장기 기억들]
-{coreMemoriesList}
+{{coreMemoriesList}}
+</context>
 
-[스케줄 작성 규칙]
-1. 0시부터 23시까지의 일정이 빈 틈 없이 연속적이어야 합니다. (예: 0~7, 7~10, 10~15, 15~18, 18~22, 22~23)
-2. NPC의 직업과 Faction(진영), 대화 상대들과의 관계를 일정에 자연스럽게 녹여내십시오. 
-3. 목표 장소(target_location)는 반드시 [이동 가능한 장소 목록] 중 하나여야 합니다. 반드시 정확히 일치해야 합니다: ""영주 저택 (Manor)"", ""성당 (Church)"", ""경비 초소 (Guard Post)"", ""연금술 공방 (Alchemy Lab)"", ""마을 광장 (Square)"", ""대장간 (Forge)"", ""뒷골목 (Back Alley)"", ""술집 (Tavern)"".
-4. 24시간 계획을 3~6개의 시간대로 나누어 짜주십시오. 시작 시간과 종료 시간은 반드시 정수(0~23)여야 합니다.
-
-[출력 형식]
-JSON 형식으로만 대답하십시오. 다른 마크다운이나 텍스트를 포함하지 마십시오.
-출력 스키마:
-{{
-  ""schedules"": [
-    {{
-      ""start_hour"": 0,
-      ""end_hour"": 7,
-      ""target_location"": ""성당 (Church)"",
-      ""activity"": ""취침 및 휴식""
-    }},
-    ...
+<output_format>
+반드시 아래 JSON 형식으로만 대답하십시오.
+{
+  "schedules": [
+    {
+      "start_hour": 0,
+      "end_hour": 7,
+      "target_location": "성당 (Church)",
+      "activity": "취침 및 휴식"
+    }
   ]
-}}
-";
+}
+</output_format>
+""";
 
         var request = new GeminiRequest(
             SystemInstruction: new Content("system", new List<Part> { new Part(prompt) }),
             Contents: new List<Content> { new Content("user", new List<Part> { new Part("하루 일정 계획 생성 시작.") }) },
-            GenerationConfig: new GenerationConfig(null, 8192, "application/json", null, new ThinkingConfig(ThinkingLevel.minimal))
+            GenerationConfig: new GenerationConfig(null, 8192, "application/json", null, new ThinkingConfig(ThinkingLevel.low))
         );
 
         string responseJson = await _apiService.SendMessageAsync(request, ModelTier.Flash35, cancellationToken);

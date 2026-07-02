@@ -31,13 +31,14 @@ service MundusVivensGrpc {
 }
 
 message TriggerDialogueRequest {
-  string agent_id_a = 1;
-  string agent_id_b = 2;
+  uint32 agent_id_a = 1;
+  uint32 agent_id_b = 2;
   bool wait_for_completion = 3;
+  repeated uint32 participant_ids = 4;
 }
 
 message TriggerDialogueResponse {
-  string task_id = 1;
+  uint64 task_id = 1;
   bool is_queued = 2;
   bool completed_immediately = 3;
   string dialogue_summary = 4;
@@ -47,7 +48,7 @@ message TriggerDialogueResponse {
 }
 
 message GetAgentStatusRequest {
-  string agent_id = 1;
+  uint32 agent_id = 1;
 }
 
 message GetAgentStatusResponse {
@@ -59,9 +60,9 @@ message GetAgentStatusResponse {
 }
 
 message InjectGossipRequest {
-  string subject_id = 1;
+  uint32 subject_id = 1;
   string content = 2;
-  string target_agent_id = 3;
+  uint32 target_agent_id = 3;
 }
 
 message InjectGossipResponse {
@@ -70,7 +71,7 @@ message InjectGossipResponse {
 }
 
 message UpdateAgentStatusRequest {
-  string agent_id = 1;
+  uint32 agent_id = 1;
   string location = 2;
   string emotion = 3;
   string activity = 4;
@@ -85,24 +86,32 @@ message ProcessWorldTickRequest {
   int32 tick_number = 1;
 }
 
+message RelationshipDelta {
+  uint32 from_agent_id = 1;
+  uint32 to_agent_id = 2;
+  int32 liking = 3;
+  int32 trust = 4;
+}
+
 message ProcessWorldTickResponse {
   bool success = 1;
   string message = 2;
-  repeated string busy_agent_ids = 3;
+  repeated uint32 busy_agent_ids = 3;
+  repeated RelationshipDelta relationship_deltas = 4;
 }
 
 message DialogueLine {
-  string speaker_id = 1;     // 화자 에이전트 ID (예: "npc_eva")
+  uint32 speaker_id = 1;     // 화자 에이전트 ID (예: "npc_eva")
   string speaker_name = 2;   // 화자 표시 이름 (예: "에바")
   string text = 3;           // 대사 내용
 }
 
 message GetDialogueResultRequest {
-  string task_id = 1;
+  uint64 task_id = 1;
 }
 
 message GetDialogueResultResponse {
-  string task_id = 1;
+  uint64 task_id = 1;
   bool is_completed = 2;        // 아직 진행 중이면 false
   string dialogue_summary = 3;
   repeated DialogueLine lines = 4;  // 구조화된 대사
@@ -126,39 +135,40 @@ message WorldEvent {
 }
 
 message AgentStatusEvent {
-  string agent_id = 1;
+  uint32 agent_id = 1;
   string location = 2;
   string emotion = 3;
   string activity = 4;
 }
 
 message DialogueEvent {
-  string task_id = 1;
-  string agent_a_id = 2;
-  string agent_b_id = 3;
+  uint64 task_id = 1;
+  uint32 agent_a_id = 2;
+  uint32 agent_b_id = 3;
   string location = 4;
   repeated DialogueLine lines = 5;    // 대화 완료 시 채워짐
   string summary = 6;
   bool is_started = 7;               // true=시작, false=완료
+  repeated uint32 participant_ids = 8; // 🆕 다자간 대화용 참여자 ID 목록
 }
 
 message MovementEvent {
-  string agent_id = 1;
+  uint32 agent_id = 1;
   string from_location = 2;
   string to_location = 3;
 }
 
 message GossipEvent {
-  string speaker_id = 1;
-  string listener_id = 2;
-  string subject_id = 3;
+  uint32 speaker_id = 1;
+  uint32 listener_id = 2;
+  uint32 subject_id = 3;
   string gossip_content = 4;
   bool is_mutated = 5;               // 와전 여부
 }
 
 message RelationshipEvent {
-  string from_agent_id = 1;
-  string to_agent_id = 2;
+  uint32 from_agent_id = 1;
+  uint32 to_agent_id = 2;
   int32 new_affinity = 3;
   int32 affinity_delta = 4;
   int32 new_trust = 5;
@@ -171,18 +181,18 @@ message TickEvent {
 
 message StartPlayerDialogueRequest {
   string player_id = 1;
-  string npc_id = 2;
+  uint32 npc_id = 2;
 }
 
 message StartPlayerDialogueResponse {
-  string session_id = 1;
+  uint64 session_id = 1;
   string greeting = 2;
   bool success = 3;
   string message = 4;
 }
 
 message SendPlayerMessageRequest {
-  string session_id = 1;
+  uint64 session_id = 1;
   string message = 2;
 }
 
@@ -191,7 +201,7 @@ message SendPlayerMessageResponse {
 }
 
 message EndPlayerDialogueRequest {
-  string session_id = 1;
+  uint64 session_id = 1;
 }
 
 message EndPlayerDialogueResponse {
@@ -201,12 +211,20 @@ message EndPlayerDialogueResponse {
 
 message GetWorldBootstrapRequest { }
 
+message RelationshipSnapshot {
+  uint32 target_agent_id = 1;
+  int32 liking = 2;
+  int32 trust = 3;
+}
+
 message InitialAgentState {
-  string agent_id = 1;
+  uint32 agent_id = 1;
   string name = 2;
   string location = 3;
   string emotion = 4;
   string activity = 5;
+  float extroversion = 6;
+  repeated RelationshipSnapshot relationships = 7;
 }
 
 message GetWorldBootstrapResponse {
@@ -216,7 +234,7 @@ message GetWorldBootstrapResponse {
 
 // 🆕 에이전트 감정 업데이트 정보
 message AgentEmotionUpdate {
-  string agent_id = 1;
+  uint32 agent_id = 1;
   string new_emotion = 2;
 }
 
@@ -230,7 +248,7 @@ message DailyScheduleItem {
 
 // 🆕 에이전트별 일일 스케줄
 message DailySchedule {
-  string agent_id = 1;
+  uint32 agent_id = 1;
   repeated DailyScheduleItem items = 2;
 }
 
@@ -270,7 +288,7 @@ message LoginResponse {
 
 // 단일 NPC 상태 스냅샷 (SC_WORLD_SNAPSHOT, SC_NPC_UPDATE 공용)
 message NpcSnapshot {
-  string npc_id = 1;
+  uint32 npc_id = 1;
   string display_name = 2;
   string location = 3;
   string emotion = 4;
@@ -290,30 +308,30 @@ message PlayerMoveRequest {
 
 // CS_TALK_TO_NPC 페이로드
 message TalkToNpcRequest {
-  string npc_id = 1;
+  uint32 npc_id = 1;
 }
 
 // SC_NPC_REPLY 페이로드
 message NpcReplyPayload {
-  string session_id = 1;
+  uint64 session_id = 1;
   string npc_name = 2;
   string reply_text = 3;
 }
 
 // CS_PLAYER_MESSAGE 페이로드
 message PlayerMessageRequest {
-  string session_id = 1;
+  uint64 session_id = 1;
   string message = 2;
 }
 
 // CS_END_DIALOGUE 페이로드
 message EndDialogueRequest {
-  string session_id = 1;
+  uint64 session_id = 1;
 }
 
 // SC_DIALOGUE_EVENT 페이로드 (NPC 간 대화 이벤트 브로드캐스트)
 message DialogueEventPayload {
-  string task_id = 1;
+  uint64 task_id = 1;
   string npc_a_name = 2;
   string npc_b_name = 3;
   string location = 4;

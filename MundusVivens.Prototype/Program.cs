@@ -39,7 +39,7 @@ public class Program
 
         // 1. 설정 불러오기
         var config = builder.Configuration;
-        var maxGlobalConcurrent = config.GetValue<int>("SimulationConfig:MaxGlobalConcurrent", 2);
+        var maxGlobalConcurrent = config.GetValue<int>("SimulationConfig:MaxGlobalConcurrent", 10);
         var sessionId = config.GetValue<string>("SimulationConfig:SessionId") ?? DateTime.Now.ToString("yyyyMMdd_HHmmss");
 
         Console.WriteLine($"[Config] SessionId: {sessionId}");
@@ -274,7 +274,7 @@ public class Program
         });
 
         // 완료된 대화 결과 조회 (REST API 방식)
-        app.MapGet("/api/interaction/result/{jobId}", (string jobId, InteractionScheduler scheduler) =>
+        app.MapGet("/api/interaction/result/{jobId}", (ulong jobId, InteractionScheduler scheduler) =>
         {
             if (scheduler.TryGetCompletedResult(jobId, out var result) && result != null)
             {
@@ -472,8 +472,8 @@ public class Program
     public record InteractionRequest(string AgentIdA, string AgentIdB, bool? Wait);
     public record GossipInjectRequest(string SubjectId, string Content, string TargetAgentId);
     public record StartPlayerDialogueApiRequest(string PlayerId, string NpcId);
-    public record SendPlayerMessageApiRequest(string SessionId, string Message);
-    public record EndPlayerDialogueApiRequest(string SessionId);
+    public record SendPlayerMessageApiRequest(ulong SessionId, string Message);
+    public record EndPlayerDialogueApiRequest(ulong SessionId);
 
 
 }
