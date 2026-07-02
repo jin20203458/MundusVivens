@@ -164,6 +164,7 @@ public class DialogueOrchestrator : IDialogueOrchestrator
 - 감정 상태: {p.Status.Emotion}
 - 활동 상태: {p.Status.Activity}
 - 위치: {p.Status.CurrentLocation}
+- 대화 전 계획했던 행동: {(p.Status.HasActiveJob ? p.Status.ActiveJobIntent : "없음")} (목표 장소: {(p.Status.HasActiveJob ? p.Status.ActiveJobLocation : "없음")})
 - 타 참가자들과의 관계:
   {string.Join("\n  ", relsStr)}
 - 관련 기억 맥락:
@@ -207,9 +208,10 @@ public class DialogueOrchestrator : IDialogueOrchestrator
    - speaker_id: 소문을 말한 화자의 AgentId
 6. next_jobs (대화 후 다음 행동 계획):
    - 대화 종료 후 각 참여자가 이동할 다음 장소(target_location)와 수행할 구체적인 행동(activity)을 결정하십시오.
+   - 대화 내용에서 동행하거나 새로운 행동을 같이 하기로 약속하지 않았다면, 무리하게 이동할 필요 없이 각자 [대화 전 계획했던 행동]의 목표 장소와 행동을 그대로 다시 수행하도록 결정해야 합니다. (원래의 계획이 '없음'이었다면 현재 위치에서 대기하거나 일상 활동을 계속하도록 하십시오.)
    - 대화 내용에서 두 에이전트가 무언가 함께하기로 합의했다면(예: 술을 마시러 술집으로 가자고 함), target_location을 반드시 동일하게 일치시키십시오.
    - target_location은 반드시 아래 [이동 가능한 장소 목록] 중 하나여야 합니다.
-   - activity는 그 장소에서 할 구체적인 행동(예: "Bart와 술집에서 술을 마시며 이야기를 나눈다")이어야 합니다.
+   - activity는 그 장소에서 할 구체적인 행동(예: "대장간에서 철광석 제련 작업을 이어서 한다" 또는 "술집으로 이동해 함께 술을 마신다")이어야 합니다.
 
 [이동 가능한 장소 목록]
 - 영주 저택 (Manor)

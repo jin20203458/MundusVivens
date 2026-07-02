@@ -530,10 +530,7 @@ public class MundusVivensGrpcService : MundusVivensGrpc.MundusVivensGrpcBase
 
             if (request.ReasonCode == InterruptReason.DialogueBusy)
             {
-                Console.WriteLine($"⏸️ [JobGiver] NPC '{agent.Persona.Name}'가 대화 중이므로 대기합니다. (대화 완료 시점에 동기화된 계획이 수립됩니다.)");
-                agent.Status.ActiveJobId = 0;
-                agent.Status.ActiveJobLocation = string.Empty;
-                agent.Status.ActiveJobIntent = string.Empty;
+                Console.WriteLine($"⏸️ [JobGiver] NPC '{agent.Persona.Name}'가 대화 중이므로 대기합니다. (원래 계획: {agent.Status.ActiveJobIntent})");
                 response.Message = "대화 중이므로 성찰을 생략합니다.";
             }
             else
