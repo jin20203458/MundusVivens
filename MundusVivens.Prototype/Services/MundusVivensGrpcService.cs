@@ -2,6 +2,8 @@ using Grpc.Core;
 using MundusVivens.Prototype.Models;
 using MundusVivens.Prototype.Protos;
 using System;
+using System.Text.Json.Serialization;
+using MundusVivens.Prototype.Helpers;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
@@ -43,6 +45,7 @@ public class MundusVivensGrpcService : MundusVivensGrpc.MundusVivensGrpcBase
     private readonly IPlayerDialogueManager _playerDialogueManager;
     private readonly IDailyPlanService _dailyPlanService; // 🆕 일일 스케줄 및 성찰 서비스 추가
     private readonly IGossipEngine _gossipEngine; // 🆕 소문 엔진 추가
+    private readonly IGeminiApiService _apiService;
 
     public MundusVivensGrpcService(
         InteractionScheduler scheduler,
@@ -50,7 +53,8 @@ public class MundusVivensGrpcService : MundusVivensGrpc.MundusVivensGrpcBase
         IWorldEventBroadcaster broadcaster,
         IPlayerDialogueManager playerDialogueManager,
         IDailyPlanService dailyPlanService,
-        IGossipEngine gossipEngine)
+        IGossipEngine gossipEngine,
+        IGeminiApiService apiService)
     {
         _scheduler = scheduler;
         _agentsAccessor = agentsAccessor;
@@ -58,6 +62,7 @@ public class MundusVivensGrpcService : MundusVivensGrpc.MundusVivensGrpcBase
         _playerDialogueManager = playerDialogueManager;
         _dailyPlanService = dailyPlanService;
         _gossipEngine = gossipEngine;
+        _apiService = apiService;
     }
 
     public override async Task<TriggerDialogueResponse> TriggerDialogue(TriggerDialogueRequest request, ServerCallContext context)
@@ -177,50 +182,6 @@ public class MundusVivensGrpcService : MundusVivensGrpc.MundusVivensGrpcBase
         });
     }
 
-    public override Task<UpdateAgentStatusResponse> UpdateAgentStatus(UpdateAgentStatusRequest request, ServerCallContext context)
-    {
-        var agents = _agentsAccessor();
-        var agentIdStr = AgentIdMapping.GetStringId(request.AgentId);
-        if (!agents.TryGetValue(agentIdStr, out var agent))
-        {
-            return Task.FromResult(new UpdateAgentStatusResponse
-            {
-                Success = false,
-                Message = $"에이전트 '{request.AgentId}'를 찾을 수 없습니다."
-            });
-        }
-
-        var oldLocation = agent.Status.CurrentLocation;
-
-        // 스레드 세이프하게 상태 갱신
-        if (!string.IsNullOrWhiteSpace(request.Location)) agent.Status.CurrentLocation = request.Location;
-        if (!string.IsNullOrWhiteSpace(request.Emotion)) agent.Status.Emotion = request.Emotion;
-        if (!string.IsNullOrWhiteSpace(request.Activity)) agent.Status.Activity = request.Activity;
-
-        Console.WriteLine($"🔄 [gRPC] 에이전트 '{agent.Persona.Name}' 상태 업데이트: 위치={agent.Status.CurrentLocation}, 감정={agent.Status.Emotion}, 행동={agent.Status.Activity}");
-
-        // 위치가 변경되었을 경우 이동 이벤트 브로드캐스트
-        if (!string.IsNullOrWhiteSpace(request.Location) && oldLocation != request.Location)
-        {
-            var moveEvent = new WorldEvent
-            {
-                Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
-                Movement = new MovementEvent
-                {
-                    AgentId = request.AgentId,
-                    FromLocation = oldLocation,
-                    ToLocation = request.Location
-                }
-            };
-            _ = _broadcaster.BroadcastAsync(moveEvent);
-        }
-
-        return Task.FromResult(new UpdateAgentStatusResponse
-        {
-            Success = true,
-            Message = $"에이전트 '{agent.Persona.Name}'의 상태가 동기화되었습니다."
-        });
-    }
 
     public override Task<BatchUpdateAgentStatusResponse> BatchUpdateAgentStatus(BatchUpdateAgentStatusRequest request, ServerCallContext context)
     {
@@ -325,41 +286,6 @@ public class MundusVivensGrpcService : MundusVivensGrpc.MundusVivensGrpcBase
         return Task.FromResult(response);
     }
 
-    public override Task<GetDialogueResultResponse> GetDialogueResult(GetDialogueResultRequest request, ServerCallContext context)
-    {
-        var response = new GetDialogueResultResponse
-        {
-            TaskId = request.TaskId
-        };
-
-        if (_scheduler.TryGetCompletedResult(request.TaskId, out var result) && result != null)
-        {
-            response.IsCompleted = true;
-            if (result.Success)
-            {
-                response.DialogueSummary = result.Summary;
-                if (result.StructuredLines != null)
-                {
-                    response.Lines.AddRange(result.StructuredLines);
-                }
-
-                if (result.EmotionUpdates != null)
-                {
-                    response.EmotionUpdates.AddRange(result.EmotionUpdates);
-                }
-            }
-            else
-            {
-                response.DialogueSummary = $"[Error] {result.ErrorMessage}";
-            }
-        }
-        else
-        {
-            response.IsCompleted = false;
-        }
-
-        return Task.FromResult(response);
-    }
 
     public override Task SubscribeWorldEvents(SubscribeRequest request, IServerStreamWriter<WorldEvent> responseStream, ServerCallContext context)
     {
@@ -480,17 +406,227 @@ public class MundusVivensGrpcService : MundusVivensGrpc.MundusVivensGrpcBase
         return Task.FromResult(response);
     }
 
-    public override Task<GetDailySchedulesResponse> GetDailySchedules(GetDailySchedulesRequest request, ServerCallContext context)
+    private static long _globalJobIdSequence = 1000;
+    public static ulong GenerateNextJobId() => (ulong)System.Threading.Interlocked.Increment(ref _globalJobIdSequence);
+
+    public override Task<GetPendingJobsResponse> GetPendingJobs(GetPendingJobsRequest request, ServerCallContext context)
     {
-        Console.WriteLine($"📥 [gRPC] 일일 스케줄 데이터 요청 수신 (틱: {request.CurrentTick})");
-        try
+        var response = new GetPendingJobsResponse();
+        var agents = _agentsAccessor();
+        int currentHour = request.CurrentTick % 24;
+
+        foreach (var kvp in agents)
         {
-            var schedules = _dailyPlanService.GetSchedulesForTick(request.CurrentTick);
-            return Task.FromResult(schedules);
+            var agent = kvp.Value;
+            if (agent.AgentId == "player") continue;
+
+            // 1. 이미 활성화된 Job이 있으면 해당 Job 정보를 보냄
+            if (agent.Status.HasActiveJob)
+            {
+                response.Jobs.Add(new JobPayload
+                {
+                    NpcId = agent.NumericId,
+                    JobId = agent.Status.ActiveJobId,
+                    TargetLocation = agent.Status.ActiveJobLocation,
+                    Intent = agent.Status.ActiveJobIntent,
+                    Priority = 1
+                });
+                continue;
+            }
+
+            // 2. 이미 활성화된 Job이 없고, 현재 시간에 완료한 작업이 없다면 새 Job 생성
+            if (agent.Status.LastCompletedHour != currentHour)
+            {
+                var dailySchedules = _dailyPlanService.GetSchedulesForTick(request.CurrentTick);
+                var schedule = dailySchedules.Schedules.FirstOrDefault(s => s.AgentId == agent.NumericId);
+                if (schedule != null)
+                {
+                    var item = schedule.Items.FirstOrDefault(i => i.StartHour <= currentHour && currentHour <= i.EndHour);
+                    if (item != null && item.Activity != "대기")
+                    {
+                        ulong newJobId = GenerateNextJobId();
+                        agent.Status.ActiveJobId = newJobId;
+                        agent.Status.ActiveJobLocation = item.TargetLocation;
+                        agent.Status.ActiveJobIntent = item.Activity;
+
+                        response.Jobs.Add(new JobPayload
+                        {
+                            NpcId = agent.NumericId,
+                            JobId = newJobId,
+                            TargetLocation = item.TargetLocation,
+                            Intent = item.Activity,
+                            Priority = 1
+                        });
+
+                        Console.WriteLine($"💼 [JobGiver] NPC '{agent.Persona.Name}'에게 새 Job {newJobId} 발급: 위치={item.TargetLocation}, 행동={item.Activity}");
+                    }
+                }
+            }
         }
-        catch (Exception ex)
+
+        return Task.FromResult(response);
+    }
+
+    public override async Task<ReportJobStatusResponse> ReportJobStatus(ReportJobStatusRequest request, ServerCallContext context)
+    {
+        var response = new ReportJobStatusResponse { Success = true };
+        var agents = _agentsAccessor();
+        var agentIdStr = AgentIdMapping.GetStringId(request.NpcId);
+
+        if (!agents.TryGetValue(agentIdStr, out var agent))
         {
-            throw new RpcException(new Status(StatusCode.Internal, $"일정 조회 중 서버 오류 발생: {ex.Message}"));
+            response.Success = false;
+            response.Message = $"에이전트 {request.NpcId}를 찾을 수 없습니다.";
+            return response;
         }
+
+        int currentHour = request.CurrentTick % 24;
+
+        if (request.Status == ReportJobStatusRequest.Types.JobStatus.Completed)
+        {
+            Console.WriteLine($"✅ [JobGiver] NPC '{agent.Persona.Name}'가 Job {request.JobId}를 완료했습니다.");
+            agent.Status.ActiveJobId = 0;
+            agent.Status.ActiveJobLocation = string.Empty;
+            agent.Status.ActiveJobIntent = string.Empty;
+            agent.Status.LastCompletedHour = currentHour;
+        }
+        else if (request.Status == ReportJobStatusRequest.Types.JobStatus.Failed)
+        {
+            Console.WriteLine($"❌ [JobGiver] NPC '{agent.Persona.Name}'가 Job {request.JobId} 수행에 실패했습니다. 사유코드: {request.ReasonCode}, 상세: {request.DetailedContext}");
+            agent.Status.ActiveJobId = 0;
+            agent.Status.ActiveJobLocation = string.Empty;
+            agent.Status.ActiveJobIntent = string.Empty;
+        }
+        else if (request.Status == ReportJobStatusRequest.Types.JobStatus.Interrupted)
+        {
+            string reasonStr = request.ReasonCode switch
+            {
+                InterruptReason.DialogueBusy => "다른 캐릭터가 말을 걸어 대화가 시작됨",
+                InterruptReason.PhysicalAttacked => "물리적인 공격을 받음",
+                InterruptReason.EnvironmentChange => "주변 환경에 급격한 변화가 발생함",
+                _ => "알 수 없는 사유로 계획 중단"
+            };
+
+            Console.WriteLine($"⏸️ [JobGiver] NPC '{agent.Persona.Name}'의 Job {request.JobId}가 중단되었습니다. 사유: {reasonStr} (상세: {request.DetailedContext})");
+
+            try
+            {
+                var newJobPayload = await TriggerDynamicReflectionAsync(agent, reasonStr, request.DetailedContext, request.CurrentTick);
+                if (newJobPayload != null)
+                {
+                    response.NewJob = newJobPayload;
+                    response.Message = $"중단 후 새로운 돌발 Job {newJobPayload.JobId}가 성공적으로 수립되었습니다.";
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[Error] 돌발 성찰 실패: {ex.Message}");
+                agent.Status.ActiveJobId = 0;
+                agent.Status.ActiveJobLocation = string.Empty;
+                agent.Status.ActiveJobIntent = string.Empty;
+                response.Message = $"돌발 성찰 실패: {ex.Message}. 기존 Job을 취소합니다.";
+            }
+        }
+
+        return response;
+    }
+
+    private async Task<JobPayload?> TriggerDynamicReflectionAsync(AgentInstance agent, string reason, string interruptContext, int tick)
+    {
+        Console.WriteLine($"🧠 [Dynamic Reflection] NPC '{agent.Persona.Name}'의 돌발 성찰 실행 중...");
+
+        string prompt = $$"""
+<role>NPC [{{agent.Persona.Name}}]의 상황 변화에 따른 행동 재계획(Dynamic Re-planning) 시스템</role>
+<task>원래 계획했던 행동을 수행하던 중 예기치 못한 사건으로 인해 행동이 중단되었습니다. NPC의 가치관과 사건 맥락을 고려하여 다음 행동을 결정해 주십시오.</task>
+
+<rules>
+1. 원래 하던 행동을 유지할지, 아니면 새로운 장소로 이동해 다른 행동을 할지 결정하십시오.
+2. 결과는 반드시 제공된 JSON 스키마를 충실히 준수하는 순수 JSON이어야 합니다.
+3. 이동 가능한 장소 목록 중 하나를 정확하게 선택해야 합니다.
+</rules>
+
+<context>
+[이동 가능한 장소 목록]
+- 영주 저택 (Manor)
+- 성당 (Church)
+- 경비 초소 (Guard Post)
+- 연금술 공방 (Alchemy Lab)
+- 마을 광장 (Square)
+- 대장간 (Forge)
+- 뒷골목 (Back Alley)
+- 술집 (Tavern)
+
+[NPC 페르소나]
+- 이름/직업: {{agent.Persona.Name}} / {{agent.Persona.Job}}
+- 핵심 가치관: {{agent.Persona.CoreValues}}
+
+[중단된 기존 계획]
+- 목표 장소: {{agent.Status.ActiveJobLocation}}
+- 계획했던 행동: {{agent.Status.ActiveJobIntent}}
+
+[발생한 돌발 사건]
+- 중단 사유: {{reason}}
+- 상세 맥락: {{interruptContext}}
+</context>
+
+<output_format>
+반드시 아래 JSON 포맷으로만 응답하십시오.
+{
+  "target_location": "이동할 장소 (예: 술집 (Tavern))",
+  "activity": "새로 수행할 구체적인 행동 (예: 구석에서 조용히 술을 마신다)"
+}
+</output_format>
+""";
+
+        var request = new GeminiRequest(
+            SystemInstruction: new Content("system", new List<Part> { new Part(prompt) }),
+            Contents: new List<Content> { new Content("user", new List<Part> { new Part("재계획 수립 시작.") }) },
+            GenerationConfig: new GenerationConfig(null, 1000, "application/json", null, new ThinkingConfig(ThinkingLevel.minimal))
+        );
+
+        string responseJson = await _apiService.SendMessageAsync(request, ModelTier.FlashLite);
+        var replan = LlmJsonParser.DeserializeSafe<DynamicReplanResponse>(responseJson);
+
+        if (replan != null && !string.IsNullOrWhiteSpace(replan.TargetLocation))
+        {
+            string correctedLocation = MapToValidLocation(replan.TargetLocation);
+            ulong newJobId = GenerateNextJobId();
+
+            agent.Status.ActiveJobId = newJobId;
+            agent.Status.ActiveJobLocation = correctedLocation;
+            agent.Status.ActiveJobIntent = replan.Activity;
+
+            Console.WriteLine($"🧠 [Dynamic Reflection] NPC '{agent.Persona.Name}'의 새로운 행동 결정: 위치={correctedLocation}, 행동={replan.Activity}");
+
+            return new JobPayload
+            {
+                NpcId = agent.NumericId,
+                JobId = newJobId,
+                TargetLocation = correctedLocation,
+                Intent = replan.Activity,
+                Priority = 2
+            };
+        }
+
+        return null;
+    }
+
+    private string MapToValidLocation(string rawLocation)
+    {
+        if (string.IsNullOrWhiteSpace(rawLocation)) return "마을 광장 (Square)";
+        var lower = rawLocation.ToLower();
+        if (lower.Contains("저택") || lower.Contains("manor")) return "영주 저택 (Manor)";
+        if (lower.Contains("성당") || lower.Contains("church")) return "성당 (Church)";
+        if (lower.Contains("초소") || lower.Contains("경비") || lower.Contains("guard")) return "경비 초소 (Guard Post)";
+        if (lower.Contains("연금") || lower.Contains("공방") || lower.Contains("alchemy") || lower.Contains("lab")) return "연금술 공방 (Alchemy Lab)";
+        if (lower.Contains("대장간") || lower.Contains("forge")) return "대장간 (Forge)";
+        if (lower.Contains("골목") || lower.Contains("alley")) return "뒷골목 (Back Alley)";
+        if (lower.Contains("술집") || lower.Contains("tavern")) return "술집 (Tavern)";
+        return "마을 광장 (Square)";
     }
 }
+
+public record DynamicReplanResponse(
+    [property: JsonPropertyName("target_location")] string TargetLocation,
+    [property: JsonPropertyName("activity")] string Activity
+);

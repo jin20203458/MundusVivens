@@ -8,11 +8,7 @@ service MundusVivensGrpc {
   rpc TriggerDialogue (TriggerDialogueRequest) returns (TriggerDialogueResponse);
   rpc GetAgentStatus (GetAgentStatusRequest) returns (GetAgentStatusResponse);
   rpc InjectGossip (InjectGossipRequest) returns (InjectGossipResponse);
-  rpc UpdateAgentStatus (UpdateAgentStatusRequest) returns (UpdateAgentStatusResponse);
   rpc ProcessWorldTick (ProcessWorldTickRequest) returns (ProcessWorldTickResponse);
-
-  // 🆕 비동기 대화 결과 조회 (Phase 4-A 신규)
-  rpc GetDialogueResult (GetDialogueResultRequest) returns (GetDialogueResultResponse);
 
   // 🆕 관찰자 모드: 실시간 이벤트 스트림 구독 (Phase 4-B 신규)
   rpc SubscribeWorldEvents (SubscribeRequest) returns (stream WorldEvent);
@@ -23,11 +19,12 @@ service MundusVivensGrpc {
   rpc EndPlayerDialogue (EndPlayerDialogueRequest) returns (EndPlayerDialogueResponse);
   rpc GetWorldBootstrap (GetWorldBootstrapRequest) returns (GetWorldBootstrapResponse);
 
-  // 🆕 일일 스케줄 조회 RPC (Phase 5-1 신규)
-  rpc GetDailySchedules (GetDailySchedulesRequest) returns (GetDailySchedulesResponse);
-
   // 🆕 에이전트 상태 배치 업데이트 RPC (Phase 5-2 신규)
   rpc BatchUpdateAgentStatus (BatchUpdateAgentStatusRequest) returns (BatchUpdateAgentStatusResponse);
+
+  // 🚀 Axis 2: Job 및 Interrupt 관리 RPC
+  rpc GetPendingJobs (GetPendingJobsRequest) returns (GetPendingJobsResponse);
+  rpc ReportJobStatus (ReportJobStatusRequest) returns (ReportJobStatusResponse);
 }
 
 message TriggerDialogueRequest {
@@ -77,11 +74,6 @@ message UpdateAgentStatusRequest {
   string activity = 4;
 }
 
-message UpdateAgentStatusResponse {
-  bool success = 1;
-  string message = 2;
-}
-
 message ProcessWorldTickRequest {
   int32 tick_number = 1;
 }
@@ -106,17 +98,6 @@ message DialogueLine {
   string text = 3;           // 대사 내용
 }
 
-message GetDialogueResultRequest {
-  uint64 task_id = 1;
-}
-
-message GetDialogueResultResponse {
-  uint64 task_id = 1;
-  bool is_completed = 2;        // 아직 진행 중이면 false
-  string dialogue_summary = 3;
-  repeated DialogueLine lines = 4;  // 구조화된 대사
-  repeated AgentEmotionUpdate emotion_updates = 5; // 🆕 대화에 따른 감정 업데이트
-}
 
 message SubscribeRequest {
   string subscriber_id = 1;
@@ -252,10 +233,6 @@ message DailySchedule {
   repeated DailyScheduleItem items = 2;
 }
 
-message GetDailySchedulesRequest {
-  int32 current_tick = 1;
-}
-
 message GetDailySchedulesResponse {
   repeated DailySchedule schedules = 1;
 }
@@ -338,6 +315,54 @@ message DialogueEventPayload {
   bool is_started = 5;                     // true=대화 시작, false=대화 종료
   string summary = 6;                     // 완료 시 요약
   repeated DialogueLine lines = 7;        // 완료 시 대사 목록
+}
+
+// ============================================================
+// Axis 2: Job 및 Interrupt 관리 메시지 정의
+// ============================================================
+
+message GetPendingJobsRequest {
+  int32 current_tick = 1;
+}
+
+message JobPayload {
+  uint32 npc_id = 1;
+  uint64 job_id = 2;
+  string target_location = 3;
+  string intent = 4;
+  uint32 target_agent_id = 5; // 선택적 (예: 상호작용 대상 NPC)
+  int32 priority = 6;
+}
+
+message GetPendingJobsResponse {
+  repeated JobPayload jobs = 1;
+}
+
+enum InterruptReason {
+  UNKNOWN_REASON = 0;
+  DIALOGUE_BUSY = 1;
+  PHYSICAL_ATTACKED = 2;
+  ENVIRONMENT_CHANGE = 3;
+}
+
+message ReportJobStatusRequest {
+  uint32 npc_id = 1;
+  uint64 job_id = 2;
+  enum JobStatus {
+    COMPLETED = 0;
+    FAILED = 1;
+    INTERRUPTED = 2;
+  }
+  JobStatus status = 3;
+  InterruptReason reason_code = 4;
+  string detailed_context = 5;
+  int32 current_tick = 6;
+}
+
+message ReportJobStatusResponse {
+  bool success = 1;
+  string message = 2;
+  JobPayload new_job = 3; // 인터럽트 후 즉시 새 Job이 할당되었을 때
 }
 
 

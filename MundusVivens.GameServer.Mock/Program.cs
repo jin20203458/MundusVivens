@@ -83,6 +83,7 @@ class Program
             }
 
             // 2. NPC 이동 및 상태 동기화
+            var batchRequest = new BatchUpdateAgentStatusRequest();
             foreach (var npcId in NpcNames.Keys)
             {
                 // 30% 확률로 다른 장소로 이동
@@ -109,16 +110,16 @@ class Program
                     Console.WriteLine($"🧍 [Status] {NpcNames[npcId]} -> {CurrentLocations[npcId]} 에 머무는 중 (활동: {CurrentActivities[npcId]})");
                 }
 
-                // gRPC를 통해 C# AI 서버로 상태 전송
-                var statusRequest = new UpdateAgentStatusRequest
+                // gRPC를 통해 C# AI 서버로 상태 전송을 위한 요청 수집
+                batchRequest.Agents.Add(new UpdateAgentStatusRequest
                 {
                     AgentId = GetNumericId(npcId),
                     Location = CurrentLocations[npcId],
                     Activity = CurrentActivities[npcId],
                     Emotion = "평온함" // 고정 또는 임의값
-                };
-                await client.UpdateAgentStatusAsync(statusRequest);
+                });
             }
+            await client.BatchUpdateAgentStatusAsync(batchRequest);
 
             // 3. 인접 NPC 검출 및 대화 트리거
             var npcIds = NpcNames.Keys.ToList();
