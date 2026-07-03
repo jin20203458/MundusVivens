@@ -263,6 +263,7 @@ message NpcSnapshot {
   LocationInfo location = 3;
   string emotion = 4;
   string activity = 5;
+  Vector3 velocity = 6;
 }
 
 // SC_WORLD_SNAPSHOT 페이로드
