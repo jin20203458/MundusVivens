@@ -3,6 +3,9 @@ namespace MundusVivens.Prototype.Models;
 public class AgentStatus
 {
     public string CurrentLocation { get; set; } = "Unknown";
+    public float X { get; set; } = 0f;
+    public float Y { get; set; } = 0f;
+    public float Z { get; set; } = 0f;
     public string Emotion { get; set; } = "평온함";
     public string Activity { get; set; } = "대기 중";
     public bool IsInConversation { get; set; } = false;
@@ -10,6 +13,9 @@ public class AgentStatus
     // 🚀 Axis 2: Job 관리용 정보
     public ulong ActiveJobId { get; set; } = 0;
     public string ActiveJobLocation { get; set; } = string.Empty;
+    public float ActiveJobX { get; set; } = 0f;
+    public float ActiveJobY { get; set; } = 0f;
+    public float ActiveJobZ { get; set; } = 0f;
     public string ActiveJobIntent { get; set; } = string.Empty;
     public bool HasActiveJob => ActiveJobId > 0;
     public int LastCompletedHour { get; set; } = -1;

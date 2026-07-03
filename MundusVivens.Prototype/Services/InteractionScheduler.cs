@@ -242,7 +242,7 @@ public class InteractionScheduler : BackgroundService
                                     TaskId = job.JobId,
                                     AgentAId = AgentIdMapping.GetNumericId(job.ParticipantIds[0]),
                                     AgentBId = job.ParticipantIds.Count > 1 ? AgentIdMapping.GetNumericId(job.ParticipantIds[1]) : 0,
-                                    Location = primaryAgent.Status.CurrentLocation,
+                                    Location = LocationCoordinateRegistry.CreateLocationInfo(primaryAgent.Status.CurrentLocation),
                                     IsStarted = true
                                 }
                             };
@@ -284,7 +284,7 @@ public class InteractionScheduler : BackgroundService
                                     TaskId = job.JobId,
                                     AgentAId = AgentIdMapping.GetNumericId(job.ParticipantIds[0]),
                                     AgentBId = job.ParticipantIds.Count > 1 ? AgentIdMapping.GetNumericId(job.ParticipantIds[1]) : 0,
-                                    Location = primaryAgent.Status.CurrentLocation,
+                                    Location = LocationCoordinateRegistry.CreateLocationInfo(primaryAgent.Status.CurrentLocation),
                                     IsStarted = false,
                                     Summary = result.Summary
                                 }

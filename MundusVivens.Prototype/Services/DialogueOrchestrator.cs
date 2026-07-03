@@ -297,7 +297,7 @@ public class DialogueOrchestrator : IDialogueOrchestrator
                         TaskId = taskId,
                         AgentAId = participants[0].NumericId,
                         AgentBId = participants.Count > 1 ? participants[1].NumericId : 0,
-                        Location = participants[0].Status.CurrentLocation,
+                        Location = LocationCoordinateRegistry.CreateLocationInfo(participants[0].Status.CurrentLocation),
                         IsStarted = true
                     }
                 };
@@ -505,8 +505,12 @@ public class DialogueOrchestrator : IDialogueOrchestrator
                 ulong newJobId = MundusVivensGrpcService.GenerateNextJobId();
                 string correctedLocation = MapToValidLocation(nj.TargetLocation);
 
+                var (targetX, targetY, targetZ) = LocationCoordinateRegistry.GetCoordinates(correctedLocation);
                 agent.Status.ActiveJobId = newJobId;
                 agent.Status.ActiveJobLocation = correctedLocation;
+                agent.Status.ActiveJobX = targetX;
+                agent.Status.ActiveJobY = targetY;
+                agent.Status.ActiveJobZ = targetZ;
                 agent.Status.ActiveJobIntent = nj.Activity;
 
                 Console.WriteLine($"🧠 [Post-Dialogue Plan] NPC '{agent.Persona.Name}'의 새로운 행동 결정: 위치={correctedLocation}, 행동={nj.Activity}");

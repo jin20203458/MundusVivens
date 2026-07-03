@@ -85,7 +85,7 @@ namespace MundusVivens.Prototype.Services
                     TaskId = session.SessionId,
                     AgentAId = player.NumericId,
                     AgentBId = npc.NumericId,
-                    Location = npc.Status.CurrentLocation,
+                    Location = LocationCoordinateRegistry.CreateLocationInfo(npc.Status.CurrentLocation),
                     IsStarted = true
                 }
             };
@@ -582,7 +582,7 @@ namespace MundusVivens.Prototype.Services
                     TaskId = session.SessionId,
                     AgentAId = player.NumericId,
                     AgentBId = npc.NumericId,
-                    Location = npc.Status.CurrentLocation,
+                    Location = LocationCoordinateRegistry.CreateLocationInfo(npc.Status.CurrentLocation),
                     IsStarted = false,
                     Summary = summary
                 }

@@ -121,7 +121,11 @@ public class MundusVivensGrpcService : MundusVivensGrpc.MundusVivensGrpcBase
                         {
                             NpcId = agent.NumericId,
                             JobId = agent.Status.ActiveJobId,
-                            TargetLocation = agent.Status.ActiveJobLocation,
+                            TargetLocation = new LocationInfo
+                            {
+                                Name = agent.Status.ActiveJobLocation,
+                                Position = new Vector3 { X = agent.Status.ActiveJobX, Y = agent.Status.ActiveJobY, Z = agent.Status.ActiveJobZ }
+                            },
                             Intent = agent.Status.ActiveJobIntent,
                             Priority = 2 // 돌발 동기화 일정이므로 2 우선순위
                         });
@@ -149,7 +153,11 @@ public class MundusVivensGrpcService : MundusVivensGrpc.MundusVivensGrpcBase
         var response = new GetAgentStatusResponse
         {
             Name = agent.Persona.Name,
-            Location = agent.Status.CurrentLocation,
+            Location = new LocationInfo
+            {
+                Name = agent.Status.CurrentLocation,
+                Position = new Vector3 { X = agent.Status.X, Y = agent.Status.Y, Z = agent.Status.Z }
+            },
             Emotion = agent.Status.Emotion,
             Activity = agent.Status.Activity
         };
@@ -215,16 +223,28 @@ public class MundusVivensGrpcService : MundusVivensGrpc.MundusVivensGrpcBase
             }
 
             var oldLocation = agent.Status.CurrentLocation;
+            var oldX = agent.Status.X;
+            var oldY = agent.Status.Y;
+            var oldZ = agent.Status.Z;
 
             // 스레드 세이프하게 상태 갱신
-            if (!string.IsNullOrWhiteSpace(agentReq.Location)) agent.Status.CurrentLocation = agentReq.Location;
+            if (agentReq.Location != null && !string.IsNullOrWhiteSpace(agentReq.Location.Name))
+            {
+                agent.Status.CurrentLocation = agentReq.Location.Name;
+                if (agentReq.Location.Position != null)
+                {
+                    agent.Status.X = agentReq.Location.Position.X;
+                    agent.Status.Y = agentReq.Location.Position.Y;
+                    agent.Status.Z = agentReq.Location.Position.Z;
+                }
+            }
             if (!string.IsNullOrWhiteSpace(agentReq.Emotion)) agent.Status.Emotion = agentReq.Emotion;
             if (!string.IsNullOrWhiteSpace(agentReq.Activity)) agent.Status.Activity = agentReq.Activity;
 
-            Console.WriteLine($"🔄 [gRPC-Batch] 에이전트 '{agent.Persona.Name}' 상태 업데이트: 위치={agent.Status.CurrentLocation}, 감정={agent.Status.Emotion}, 행동={agent.Status.Activity}");
+            Console.WriteLine($"🔄 [gRPC-Batch] 에이전트 '{agent.Persona.Name}' 상태 업데이트: 위치={agent.Status.CurrentLocation} ({agent.Status.X:0.0}, {agent.Status.Y:0.0}, {agent.Status.Z:0.0}), 감정={agent.Status.Emotion}, 행동={agent.Status.Activity}");
 
             // 위치가 변경되었을 경우 이동 이벤트 브로드캐스트
-            if (!string.IsNullOrWhiteSpace(agentReq.Location) && oldLocation != agentReq.Location)
+            if (agentReq.Location != null && !string.IsNullOrWhiteSpace(agentReq.Location.Name) && oldLocation != agentReq.Location.Name)
             {
                 var moveEvent = new WorldEvent
                 {
@@ -232,7 +252,11 @@ public class MundusVivensGrpcService : MundusVivensGrpc.MundusVivensGrpcBase
                     Movement = new MovementEvent
                     {
                         AgentId = agentReq.AgentId,
-                        FromLocation = oldLocation,
+                        FromLocation = new LocationInfo
+                        {
+                            Name = oldLocation,
+                            Position = new Vector3 { X = oldX, Y = oldY, Z = oldZ }
+                        },
                         ToLocation = agentReq.Location
                     }
                 };
@@ -377,11 +401,21 @@ public class MundusVivensGrpcService : MundusVivensGrpc.MundusVivensGrpcBase
 
         foreach (var kv in agents)
         {
+            var initialLoc = kv.Value.Status.CurrentLocation;
+            var (initX, initY, initZ) = LocationCoordinateRegistry.GetCoordinates(initialLoc);
+            kv.Value.Status.X = initX;
+            kv.Value.Status.Y = initY;
+            kv.Value.Status.Z = initZ;
+
             var agentState = new InitialAgentState
             {
                 AgentId = kv.Value.NumericId,
                 Name = kv.Value.Persona.Name,
-                Location = kv.Value.Status.CurrentLocation,
+                Location = new LocationInfo
+                {
+                    Name = initialLoc,
+                    Position = new Vector3 { X = initX, Y = initY, Z = initZ }
+                },
                 Emotion = kv.Value.Status.Emotion,
                 Activity = kv.Value.Status.Activity,
                 Extroversion = (float)kv.Value.Persona.Extroversion
@@ -418,7 +452,7 @@ public class MundusVivensGrpcService : MundusVivensGrpc.MundusVivensGrpcBase
             locations.Add("술집 (Tavern)");
         }
 
-        response.Locations.AddRange(locations);
+        response.Locations.AddRange(locations.Select(LocationCoordinateRegistry.CreateLocationInfo));
 
         return Task.FromResult(response);
     }
@@ -444,7 +478,11 @@ public class MundusVivensGrpcService : MundusVivensGrpc.MundusVivensGrpcBase
                 {
                     NpcId = agent.NumericId,
                     JobId = agent.Status.ActiveJobId,
-                    TargetLocation = agent.Status.ActiveJobLocation,
+                    TargetLocation = new LocationInfo
+                    {
+                        Name = agent.Status.ActiveJobLocation,
+                        Position = new Vector3 { X = agent.Status.ActiveJobX, Y = agent.Status.ActiveJobY, Z = agent.Status.ActiveJobZ }
+                    },
                     Intent = agent.Status.ActiveJobIntent,
                     Priority = 1
                 });
@@ -459,20 +497,28 @@ public class MundusVivensGrpcService : MundusVivensGrpc.MundusVivensGrpcBase
                 if (item != null && item.Activity != "대기")
                 {
                     ulong newJobId = GenerateNextJobId();
+                    var (targetX, targetY, targetZ) = LocationCoordinateRegistry.GetCoordinates(item.TargetLocation);
                     agent.Status.ActiveJobId = newJobId;
                     agent.Status.ActiveJobLocation = item.TargetLocation;
+                    agent.Status.ActiveJobX = targetX;
+                    agent.Status.ActiveJobY = targetY;
+                    agent.Status.ActiveJobZ = targetZ;
                     agent.Status.ActiveJobIntent = item.Activity;
 
                     response.Jobs.Add(new JobPayload
                     {
                         NpcId = agent.NumericId,
                         JobId = newJobId,
-                        TargetLocation = item.TargetLocation,
+                        TargetLocation = new LocationInfo
+                        {
+                            Name = item.TargetLocation,
+                            Position = new Vector3 { X = targetX, Y = targetY, Z = targetZ }
+                        },
                         Intent = item.Activity,
                         Priority = 1
                     });
 
-                    Console.WriteLine($"💼 [JobGiver] NPC '{agent.Persona.Name}'에게 새 Job {newJobId} 발급: 위치={item.TargetLocation}, 행동={item.Activity}");
+                    Console.WriteLine($"💼 [JobGiver] NPC '{agent.Persona.Name}'에게 새 Job {newJobId} 발급: 위치={item.TargetLocation} ({targetX:0.0}, {targetY:0.0}, {targetZ:0.0}), 행동={item.Activity}");
                 }
             }
         }
@@ -500,6 +546,9 @@ public class MundusVivensGrpcService : MundusVivensGrpc.MundusVivensGrpcBase
             Console.WriteLine($"✅ [JobGiver] NPC '{agent.Persona.Name}'가 Job {request.JobId}를 완료했습니다.");
             agent.Status.ActiveJobId = 0;
             agent.Status.ActiveJobLocation = string.Empty;
+            agent.Status.ActiveJobX = 0f;
+            agent.Status.ActiveJobY = 0f;
+            agent.Status.ActiveJobZ = 0f;
             agent.Status.ActiveJobIntent = string.Empty;
             agent.Status.LastCompletedHour = currentHour;
         }
@@ -508,6 +557,9 @@ public class MundusVivensGrpcService : MundusVivensGrpc.MundusVivensGrpcBase
             Console.WriteLine($"❌ [JobGiver] NPC '{agent.Persona.Name}'가 Job {request.JobId} 수행에 실패했습니다. 사유코드: {request.ReasonCode}, 상세: {request.DetailedContext}");
             agent.Status.ActiveJobId = 0;
             agent.Status.ActiveJobLocation = string.Empty;
+            agent.Status.ActiveJobX = 0f;
+            agent.Status.ActiveJobY = 0f;
+            agent.Status.ActiveJobZ = 0f;
             agent.Status.ActiveJobIntent = string.Empty;
         }
         else if (request.Status == ReportJobStatusRequest.Types.JobStatus.Interrupted)
@@ -543,6 +595,9 @@ public class MundusVivensGrpcService : MundusVivensGrpc.MundusVivensGrpcBase
                     Console.WriteLine($"[Error] 돌발 성찰 실패: {ex.Message}");
                     agent.Status.ActiveJobId = 0;
                     agent.Status.ActiveJobLocation = string.Empty;
+                    agent.Status.ActiveJobX = 0f;
+                    agent.Status.ActiveJobY = 0f;
+                    agent.Status.ActiveJobZ = 0f;
                     agent.Status.ActiveJobIntent = string.Empty;
                     response.Message = $"돌발 성찰 실패: {ex.Message}. 기존 Job을 취소합니다.";
                 }
@@ -612,18 +667,26 @@ public class MundusVivensGrpcService : MundusVivensGrpc.MundusVivensGrpcBase
         {
             string correctedLocation = MapToValidLocation(replan.TargetLocation);
             ulong newJobId = GenerateNextJobId();
+            var (targetX, targetY, targetZ) = LocationCoordinateRegistry.GetCoordinates(correctedLocation);
 
             agent.Status.ActiveJobId = newJobId;
             agent.Status.ActiveJobLocation = correctedLocation;
+            agent.Status.ActiveJobX = targetX;
+            agent.Status.ActiveJobY = targetY;
+            agent.Status.ActiveJobZ = targetZ;
             agent.Status.ActiveJobIntent = replan.Activity;
 
-            Console.WriteLine($"🧠 [Dynamic Reflection] NPC '{agent.Persona.Name}'의 새로운 행동 결정: 위치={correctedLocation}, 행동={replan.Activity}");
+            Console.WriteLine($"🧠 [Dynamic Reflection] NPC '{agent.Persona.Name}'의 새로운 행동 결정: 위치={correctedLocation} ({targetX:0.0}, {targetY:0.0}, {targetZ:0.0}), 행동={replan.Activity}");
 
             return new JobPayload
             {
                 NpcId = agent.NumericId,
                 JobId = newJobId,
-                TargetLocation = correctedLocation,
+                TargetLocation = new LocationInfo
+                {
+                    Name = correctedLocation,
+                    Position = new Vector3 { X = targetX, Y = targetY, Z = targetZ }
+                },
                 Intent = replan.Activity,
                 Priority = 2
             };

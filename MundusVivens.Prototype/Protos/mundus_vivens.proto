@@ -4,6 +4,17 @@ option csharp_namespace = "MundusVivens.Prototype.Protos";
 
 package mundusvivens;
 
+message Vector3 {
+  float x = 1;
+  float y = 2;
+  float z = 3;
+}
+
+message LocationInfo {
+  string name = 1;
+  Vector3 position = 2;
+}
+
 service MundusVivensGrpc {
   rpc TriggerDialogue (TriggerDialogueRequest) returns (TriggerDialogueResponse);
   rpc GetAgentStatus (GetAgentStatusRequest) returns (GetAgentStatusResponse);
@@ -13,8 +24,8 @@ service MundusVivensGrpc {
   // 관찰자 모드: 실시간 이벤트 스트림 구독 
   rpc SubscribeWorldEvents (SubscribeRequest) returns (stream WorldEvent);
   // 참여자 모드: 플레이어-NPC 간 대화 상호작용 
-
   rpc StartPlayerDialogue (StartPlayerDialogueRequest) returns (StartPlayerDialogueResponse);
+
   rpc SendPlayerMessage (SendPlayerMessageRequest) returns (SendPlayerMessageResponse);
   rpc EndPlayerDialogue (EndPlayerDialogueRequest) returns (EndPlayerDialogueResponse);
   rpc GetWorldBootstrap (GetWorldBootstrapRequest) returns (GetWorldBootstrapResponse);
@@ -22,7 +33,7 @@ service MundusVivensGrpc {
   // 에이전트 상태 배치 업데이트 RPC 
   rpc BatchUpdateAgentStatus (BatchUpdateAgentStatusRequest) returns (BatchUpdateAgentStatusResponse);
 
-  // 🚀 Axis 2: Job 및 Interrupt 관리 RPC
+  // Axis 2: Job 및 Interrupt 관리 RPC
   rpc GetPendingJobs (GetPendingJobsRequest) returns (GetPendingJobsResponse);
   rpc ReportJobStatus (ReportJobStatusRequest) returns (ReportJobStatusResponse);
 }
@@ -50,7 +61,7 @@ message GetAgentStatusRequest {
 
 message GetAgentStatusResponse {
   string name = 1;
-  string location = 2;
+  LocationInfo location = 2;
   string emotion = 3;
   string activity = 4;
   repeated string memories = 5;
@@ -69,7 +80,7 @@ message InjectGossipResponse {
 
 message UpdateAgentStatusRequest {
   uint32 agent_id = 1;
-  string location = 2;
+  LocationInfo location = 2;
   string emotion = 3;
   string activity = 4;
 }
@@ -117,7 +128,7 @@ message WorldEvent {
 
 message AgentStatusEvent {
   uint32 agent_id = 1;
-  string location = 2;
+  LocationInfo location = 2;
   string emotion = 3;
   string activity = 4;
 }
@@ -126,7 +137,7 @@ message DialogueEvent {
   uint64 task_id = 1;
   uint32 agent_a_id = 2;
   uint32 agent_b_id = 3;
-  string location = 4;
+  LocationInfo location = 4;
   repeated DialogueLine lines = 5;     // 대화 완료 시 채워짐
   string summary = 6;
   bool is_started = 7;                 // true=시작, false=완료
@@ -135,8 +146,8 @@ message DialogueEvent {
 
 message MovementEvent {
   uint32 agent_id = 1;
-  string from_location = 2;
-  string to_location = 3;
+  LocationInfo from_location = 2;
+  LocationInfo to_location = 3;
 }
 
 message GossipEvent {
@@ -201,7 +212,7 @@ message RelationshipSnapshot {
 message InitialAgentState {
   uint32 agent_id = 1;
   string name = 2;
-  string location = 3;
+  LocationInfo location = 3;
   string emotion = 4;
   string activity = 5;
   float extroversion = 6;
@@ -209,7 +220,7 @@ message InitialAgentState {
 }
 
 message GetWorldBootstrapResponse {
-  repeated string locations = 1;
+  repeated LocationInfo locations = 1;
   repeated InitialAgentState agents = 2;
 }
 
@@ -218,8 +229,6 @@ message AgentEmotionUpdate {
   uint32 agent_id = 1;
   string new_emotion = 2;
 }
-
-
 
 message BatchUpdateAgentStatusRequest {
   repeated UpdateAgentStatusRequest agents = 1;
@@ -230,7 +239,7 @@ message BatchUpdateAgentStatusResponse {
 }
 
 // ============================================================
-// TCP 클라이언트 패킷 페이로드 메시지 (Phase 6 Step 3)
+// TCP 클라이언트 패킷 페이로드 메시지 
 // ============================================================
 
 // CS_LOGIN 페이로드
@@ -243,15 +252,15 @@ message LoginRequest {
 message LoginResponse {
   bool success = 1;
   string message = 2;
-  repeated string locations = 3;           // 월드 내 모든 위치 목록
-  repeated NpcSnapshot npcs = 4;           // 현재 NPC 전체 상태
+  repeated LocationInfo locations = 3;    // 월드 내 모든 위치 목록
+  repeated NpcSnapshot npcs = 4;          // 현재 NPC 전체 상태
 }
 
 // 단일 NPC 상태 스냅샷 (SC_WORLD_SNAPSHOT, SC_NPC_UPDATE 공용)
 message NpcSnapshot {
   uint32 npc_id = 1;
   string display_name = 2;
-  string location = 3;
+  LocationInfo location = 3;
   string emotion = 4;
   string activity = 5;
 }
@@ -264,7 +273,7 @@ message WorldSnapshotPayload {
 
 // CS_PLAYER_MOVE 페이로드
 message PlayerMoveRequest {
-  string target_location = 1;
+  LocationInfo target_location = 1;
 }
 
 // CS_TALK_TO_NPC 페이로드
@@ -295,7 +304,7 @@ message DialogueEventPayload {
   uint64 task_id = 1;
   string npc_a_name = 2;
   string npc_b_name = 3;
-  string location = 4;
+  LocationInfo location = 4;
   bool is_started = 5;                     // true=대화 시작, false=대화 종료
   string summary = 6;                     // 완료 시 요약
   repeated DialogueLine lines = 7;        // 완료 시 대사 목록
@@ -312,7 +321,7 @@ message GetPendingJobsRequest {
 message JobPayload {
   uint32 npc_id = 1;
   uint64 job_id = 2;
-  string target_location = 3;
+  LocationInfo target_location = 3;
   string intent = 4;
   uint32 target_agent_id = 5; // 선택적 (예: 상호작용 대상 NPC)
   int32 priority = 6;
@@ -348,5 +357,3 @@ message ReportJobStatusResponse {
   string message = 2;
   JobPayload new_job = 3; // 인터럽트 후 즉시 새 Job이 할당되었을 때
 }
-
-

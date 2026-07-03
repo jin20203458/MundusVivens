@@ -114,7 +114,7 @@ class Program
                 batchRequest.Agents.Add(new UpdateAgentStatusRequest
                 {
                     AgentId = GetNumericId(npcId),
-                    Location = CurrentLocations[npcId],
+                    Location = CreateLocationInfo(CurrentLocations[npcId]),
                     Activity = CurrentActivities[npcId],
                     Emotion = "평온함" // 고정 또는 임의값
                 });
@@ -188,5 +188,15 @@ class Program
         }
     }
 
-
+    private static LocationInfo CreateLocationInfo(string name)
+    {
+        float x = 0f, y = 0f, z = 0f;
+        if (name.Contains("Church") || name.Contains("성당")) { x = 10f; z = 50f; }
+        else if (name.Contains("Tavern") || name.Contains("술집")) { x = -15f; z = -5f; }
+        return new LocationInfo
+        {
+            Name = name,
+            Position = new Vector3 { X = x, Y = y, Z = z }
+        };
+    }
 }
