@@ -19,19 +19,16 @@ public class DialogueJob
 
     public ulong JobId { get; } = GenerateJobId();
     public List<string> ParticipantIds { get; }
-    public bool WaitForCompletion { get; }
     public TaskCompletionSource<DialogueSchedulerResult> CompletionSource { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-    public DialogueJob(List<string> participantIds, bool waitForCompletion)
+    public DialogueJob(List<string> participantIds)
     {
         ParticipantIds = participantIds;
-        WaitForCompletion = waitForCompletion;
     }
 
-    public DialogueJob(string agentIdA, string agentIdB, bool waitForCompletion)
+    public DialogueJob(string agentIdA, string agentIdB)
     {
         ParticipantIds = new List<string> { agentIdA, agentIdB };
-        WaitForCompletion = waitForCompletion;
     }
 }
 
@@ -83,12 +80,12 @@ public class InteractionScheduler : BackgroundService
         });
     }
 
-    public async Task<DialogueSchedulerResult> QueueDialogueJobAsync(string agentIdA, string agentIdB, bool wait, CancellationToken cancellationToken = default)
+    public async Task<DialogueSchedulerResult> QueueDialogueJobAsync(string agentIdA, string agentIdB, CancellationToken cancellationToken = default)
     {
-        return await QueueGroupDialogueJobAsync(new List<string> { agentIdA, agentIdB }, wait, cancellationToken);
+        return await QueueGroupDialogueJobAsync(new List<string> { agentIdA, agentIdB }, cancellationToken);
     }
 
-    public async Task<DialogueSchedulerResult> QueueGroupDialogueJobAsync(List<string> participantIds, bool wait, CancellationToken cancellationToken = default)
+    public async Task<DialogueSchedulerResult> QueueGroupDialogueJobAsync(List<string> participantIds, CancellationToken cancellationToken = default)
     {
         var agents = _agentsAccessor();
         foreach (var pId in participantIds)
@@ -121,22 +118,12 @@ public class InteractionScheduler : BackgroundService
             };
         }
 
-        var job = new DialogueJob(participantIds, wait);
+        var job = new DialogueJob(participantIds);
         
-        _logger.LogInformation($"[Scheduler] 대화 등록 요청: {string.Join(", ", participantIds)} (wait={wait})");
+        _logger.LogInformation($"[Scheduler] 대화 등록 요청: {string.Join(", ", participantIds)}");
         await _incomingChannel.Writer.WriteAsync(job, cancellationToken);
 
-        if (wait)
-        {
-            return await job.CompletionSource.Task;
-        }
-
-        return new DialogueSchedulerResult
-        {
-            JobId = job.JobId,
-            Success = true,
-            Summary = "대화가 큐에 등록되었습니다. 백그라운드에서 진행됩니다."
-        };
+        return await job.CompletionSource.Task;
     }
 
     public List<object> GetActiveAndPendingJobs()

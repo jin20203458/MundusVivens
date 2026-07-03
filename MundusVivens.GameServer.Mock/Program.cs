@@ -148,8 +148,7 @@ class Program
                                 var dialogueRequest = new TriggerDialogueRequest
                                 {
                                     AgentIdA = GetNumericId(npcA),
-                                    AgentIdB = GetNumericId(npcB),
-                                    WaitForCompletion = true
+                                    AgentIdB = GetNumericId(npcB)
                                 };
 
                                 var response = await client.TriggerDialogueAsync(dialogueRequest);

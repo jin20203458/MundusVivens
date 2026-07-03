@@ -30,7 +30,6 @@ service MundusVivensGrpc {
 message TriggerDialogueRequest {
   uint32 agent_id_a = 1;
   uint32 agent_id_b = 2;
-  bool wait_for_completion = 3;
   repeated uint32 participant_ids = 4;
 }
 

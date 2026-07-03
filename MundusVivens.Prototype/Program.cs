@@ -244,32 +244,21 @@ public class Program
             ConcurrentDictionary<string, AgentInstance> agents,
             CancellationToken ct) =>
         {
-            bool wait = request.Wait ?? true;
-            
-            var result = await scheduler.QueueDialogueJobAsync(request.AgentIdA, request.AgentIdB, wait, ct);
+            var result = await scheduler.QueueDialogueJobAsync(request.AgentIdA, request.AgentIdB, ct);
             
             if (!result.Success)
             {
                 return Results.BadRequest(new { Error = result.ErrorMessage });
             }
 
-            if (wait)
+            return Results.Ok(new
             {
-                return Results.Ok(new
-                {
-                    result.JobId,
-                    Status = "Completed",
-                    result.Summary,
-                    result.DialogueLines,
-                    result.StructuredLines
-                });
-            }
-
-            return Results.Accepted($"/api/interaction/result/{result.JobId}", new
-            {
-                TaskId = result.JobId,
-                Status = "Queued",
-                Message = result.Summary
+                result.JobId,
+                Status = "Completed",
+                result.Summary,
+                result.DialogueLines,
+                result.StructuredLines,
+                result.EmotionUpdates
             });
         });
 

@@ -75,7 +75,6 @@ public class MundusVivensGrpcService : MundusVivensGrpc.MundusVivensGrpcBase
                 var stringIds = request.ParticipantIds.Select(AgentIdMapping.GetStringId).ToList();
                 result = await _scheduler.QueueGroupDialogueJobAsync(
                     stringIds,
-                    request.WaitForCompletion,
                     context.CancellationToken
                 );
             }
@@ -84,7 +83,6 @@ public class MundusVivensGrpcService : MundusVivensGrpc.MundusVivensGrpcBase
                 result = await _scheduler.QueueDialogueJobAsync(
                     AgentIdMapping.GetStringId(request.AgentIdA),
                     AgentIdMapping.GetStringId(request.AgentIdB),
-                    request.WaitForCompletion,
                     context.CancellationToken
                 );
             }
@@ -93,7 +91,7 @@ public class MundusVivensGrpcService : MundusVivensGrpc.MundusVivensGrpcBase
             {
                 TaskId = result.JobId,
                 IsQueued = true,
-                CompletedImmediately = request.WaitForCompletion && result.Success,
+                CompletedImmediately = result.Success,
                 DialogueSummary = result.Summary
             };
 
