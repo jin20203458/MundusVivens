@@ -454,29 +454,25 @@ public class MundusVivensGrpcService : MundusVivensGrpc.MundusVivensGrpcBase
             // 2. 이미 활성화된 Job이 없고, 현재 시간에 완료한 작업이 없다면 새 Job 생성
             if (agent.Status.LastCompletedHour != currentHour)
             {
-                var dailySchedules = _dailyPlanService.GetSchedulesForTick(request.CurrentTick);
-                var schedule = dailySchedules.Schedules.FirstOrDefault(s => s.AgentId == agent.NumericId);
-                if (schedule != null)
+                var scheduleItems = _dailyPlanService.GetScheduleForAgent(agent.AgentId);
+                var item = scheduleItems.FirstOrDefault(i => i.StartHour <= currentHour && currentHour <= i.EndHour);
+                if (item != null && item.Activity != "대기")
                 {
-                    var item = schedule.Items.FirstOrDefault(i => i.StartHour <= currentHour && currentHour <= i.EndHour);
-                    if (item != null && item.Activity != "대기")
+                    ulong newJobId = GenerateNextJobId();
+                    agent.Status.ActiveJobId = newJobId;
+                    agent.Status.ActiveJobLocation = item.TargetLocation;
+                    agent.Status.ActiveJobIntent = item.Activity;
+
+                    response.Jobs.Add(new JobPayload
                     {
-                        ulong newJobId = GenerateNextJobId();
-                        agent.Status.ActiveJobId = newJobId;
-                        agent.Status.ActiveJobLocation = item.TargetLocation;
-                        agent.Status.ActiveJobIntent = item.Activity;
+                        NpcId = agent.NumericId,
+                        JobId = newJobId,
+                        TargetLocation = item.TargetLocation,
+                        Intent = item.Activity,
+                        Priority = 1
+                    });
 
-                        response.Jobs.Add(new JobPayload
-                        {
-                            NpcId = agent.NumericId,
-                            JobId = newJobId,
-                            TargetLocation = item.TargetLocation,
-                            Intent = item.Activity,
-                            Priority = 1
-                        });
-
-                        Console.WriteLine($"💼 [JobGiver] NPC '{agent.Persona.Name}'에게 새 Job {newJobId} 발급: 위치={item.TargetLocation}, 행동={item.Activity}");
-                    }
+                    Console.WriteLine($"💼 [JobGiver] NPC '{agent.Persona.Name}'에게 새 Job {newJobId} 발급: 위치={item.TargetLocation}, 행동={item.Activity}");
                 }
             }
         }

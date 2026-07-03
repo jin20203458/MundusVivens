@@ -10,16 +10,16 @@ service MundusVivensGrpc {
   rpc InjectGossip (InjectGossipRequest) returns (InjectGossipResponse);
   rpc ProcessWorldTick (ProcessWorldTickRequest) returns (ProcessWorldTickResponse);
 
-  // 🆕 관찰자 모드: 실시간 이벤트 스트림 구독 (Phase 4-B 신규)
+  // 관찰자 모드: 실시간 이벤트 스트림 구독 
   rpc SubscribeWorldEvents (SubscribeRequest) returns (stream WorldEvent);
+  // 참여자 모드: 플레이어-NPC 간 대화 상호작용 
 
-  // 🆕 참여자 모드: 플레이어-NPC 간 대화 상호작용 (Phase 4-B 신규)
   rpc StartPlayerDialogue (StartPlayerDialogueRequest) returns (StartPlayerDialogueResponse);
   rpc SendPlayerMessage (SendPlayerMessageRequest) returns (SendPlayerMessageResponse);
   rpc EndPlayerDialogue (EndPlayerDialogueRequest) returns (EndPlayerDialogueResponse);
   rpc GetWorldBootstrap (GetWorldBootstrapRequest) returns (GetWorldBootstrapResponse);
 
-  // 🆕 에이전트 상태 배치 업데이트 RPC (Phase 5-2 신규)
+  // 에이전트 상태 배치 업데이트 RPC 
   rpc BatchUpdateAgentStatus (BatchUpdateAgentStatusRequest) returns (BatchUpdateAgentStatusResponse);
 
   // 🚀 Axis 2: Job 및 Interrupt 관리 RPC
@@ -38,10 +38,10 @@ message TriggerDialogueResponse {
   bool is_queued = 2;
   bool completed_immediately = 3;
   string dialogue_summary = 4;
-  repeated string dialogue_lines = 5;
-  repeated DialogueLine structured_lines = 6; // 🆕 구조화된 대사 데이터 (하위호환 유지하며 추가)
-  repeated AgentEmotionUpdate emotion_updates = 7; // 🆕 대화에 따른 감정 업데이트
-  repeated JobPayload next_jobs = 8; // 🆕 대화 결과에 따른 다음 행동들
+  repeated string dialogue_lines = 5;         // 디버깅용 데이터
+  repeated DialogueLine structured_lines = 6; // 구조화된 대사 데이터 
+  repeated AgentEmotionUpdate emotion_updates = 7; 
+  repeated JobPayload next_jobs = 8; 
 }
 
 message GetAgentStatusRequest {
@@ -106,12 +106,12 @@ message SubscribeRequest {
 message WorldEvent {
   int64 timestamp = 1;
   oneof event {
-    DialogueEvent dialogue = 2;       // 대화 시작/진행/종료
-    MovementEvent movement = 3;       // NPC 이동
-    GossipEvent gossip = 4;           // 소문 전파 발생
+    DialogueEvent dialogue = 2;         // 대화 시작/진행/종료
+    MovementEvent movement = 3;         // NPC 이동
+    GossipEvent gossip = 4;             // 소문 전파 발생
     RelationshipEvent relationship = 5; // 관계도 변화
-    TickEvent tick = 6;               // 틱 진행
-    AgentStatusEvent agent_status = 7; // 🆕 NPC 상태 변동 알림
+    TickEvent tick = 6;                 // 틱 진행
+    AgentStatusEvent agent_status = 7;  // NPC 상태 변동 알림
   }
 }
 
@@ -127,10 +127,10 @@ message DialogueEvent {
   uint32 agent_a_id = 2;
   uint32 agent_b_id = 3;
   string location = 4;
-  repeated DialogueLine lines = 5;    // 대화 완료 시 채워짐
+  repeated DialogueLine lines = 5;     // 대화 완료 시 채워짐
   string summary = 6;
-  bool is_started = 7;               // true=시작, false=완료
-  repeated uint32 participant_ids = 8; // 🆕 다자간 대화용 참여자 ID 목록
+  bool is_started = 7;                 // true=시작, false=완료
+  repeated uint32 participant_ids = 8; // 다자간 대화용 참여자 ID 목록
 }
 
 message MovementEvent {
@@ -144,7 +144,7 @@ message GossipEvent {
   uint32 listener_id = 2;
   uint32 subject_id = 3;
   string gossip_content = 4;
-  bool is_mutated = 5;               // 와전 여부
+  bool is_mutated = 5;           
 }
 
 message RelationshipEvent {
@@ -213,29 +213,13 @@ message GetWorldBootstrapResponse {
   repeated InitialAgentState agents = 2;
 }
 
-// 🆕 에이전트 감정 업데이트 정보
+//  에이전트 감정 업데이트 정보
 message AgentEmotionUpdate {
   uint32 agent_id = 1;
   string new_emotion = 2;
 }
 
-// 🆕 일일 스케줄 항목
-message DailyScheduleItem {
-  int32 start_hour = 1;      // 시작 시간 (0~23)
-  int32 end_hour = 2;        // 종료 시간 (0~23)
-  string target_location = 3;  // 이동할 장소
-  string activity = 4;       // 해당 장소에서 할 구체적인 행동
-}
 
-// 🆕 에이전트별 일일 스케줄
-message DailySchedule {
-  uint32 agent_id = 1;
-  repeated DailyScheduleItem items = 2;
-}
-
-message GetDailySchedulesResponse {
-  repeated DailySchedule schedules = 1;
-}
 
 message BatchUpdateAgentStatusRequest {
   repeated UpdateAgentStatusRequest agents = 1;

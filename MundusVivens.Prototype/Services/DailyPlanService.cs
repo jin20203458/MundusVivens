@@ -15,7 +15,7 @@ namespace MundusVivens.Prototype.Services;
 public interface IDailyPlanService
 {
     Task PerformReflectionAndGenerateSchedulesAsync(int tickNumber, CancellationToken cancellationToken = default);
-    GetDailySchedulesResponse GetSchedulesForTick(int currentTick);
+    List<DailyScheduleItem> GetScheduleForAgent(string agentId);
     void InitializeDefaultSchedules();
 }
 
@@ -45,30 +45,20 @@ public class DailyPlanService : IDailyPlanService
         }
     }
 
-    public GetDailySchedulesResponse GetSchedulesForTick(int currentTick)
+    public List<DailyScheduleItem> GetScheduleForAgent(string agentId)
     {
-        var response = new GetDailySchedulesResponse();
-        var agents = _agentsAccessor();
-
         // 만약 캐시된 일정이 하나도 없다면 기본 일정으로 강제 초기화
         if (_cachedSchedules.IsEmpty)
         {
             InitializeDefaultSchedules();
         }
 
-        foreach (var kvp in _cachedSchedules)
+        if (_cachedSchedules.TryGetValue(agentId, out var schedule))
         {
-            if (kvp.Key == "player") continue; // 플레이어는 계획 수립에서 제외
-
-            var dailySchedule = new DailySchedule
-            {
-                AgentId = AgentIdMapping.GetNumericId(kvp.Key)
-            };
-            dailySchedule.Items.AddRange(kvp.Value);
-            response.Schedules.Add(dailySchedule);
+            return schedule;
         }
 
-        return response;
+        return new List<DailyScheduleItem>();
     }
 
     public async Task PerformReflectionAndGenerateSchedulesAsync(int tickNumber, CancellationToken cancellationToken = default)
