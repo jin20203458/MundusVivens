@@ -363,22 +363,8 @@ public class Program
             return Results.Ok(new { Message = $"에이전트 '{targetAgent.Persona.Name}'에게 소문 주입 완료" });
         });
 
-        // 1. 대시보드 뷰어 서빙
-        app.MapGet("/", async () =>
-        {
-            var path = Path.Combine(Directory.GetCurrentDirectory(), "wwwroot", "index.html");
-            if (!File.Exists(path))
-            {
-                path = Path.Combine(AppContext.BaseDirectory, "wwwroot", "index.html");
-            }
-
-            if (!File.Exists(path))
-            {
-                return Results.NotFound("Dashboard UI file (wwwroot/index.html) not found. Please verify placement.");
-            }
-
-            return Results.Content(await File.ReadAllTextAsync(path, Encoding.UTF8), "text/html", Encoding.UTF8);
-        });
+        // 1. 루트 경로 진입 시 안내
+        app.MapGet("/", () => Results.Ok("Project Mundus Vivens API Server is running. Dashboard is currently offline."));
 
         // 2. Server-Sent Events (SSE) 실시간 이벤트 스트림
         app.MapGet("/api/events", async (HttpContext httpContext, IWorldEventBroadcaster broadcaster, CancellationToken ct) =>
