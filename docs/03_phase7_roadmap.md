@@ -1,59 +1,45 @@
 # 🚀 Mundus Vivens: Phase 7 Realism Expansion Roadmap
 
-이 문서는 2025/2026년 최신 AI 에이전트 아키텍처 연구(eMEM, MAGMA, ARTEM 등)를 기반으로 작성된 **차기 개발 과제 목록(Living Roadmap)**입니다. 코딩 에이전트는 향후 기능 추가 시 이 문서의 `[PLANNED]` 항목들을 실제 `[IMPLEMENTED]`로 전환하는 작업을 수행합니다.
+이 문서는 AI 에이전트 아키텍처 연구를 바탕으로 **1인 개발 환경에 맞게 현실화한 Phase 7 개발 과제 목록(Living Roadmap)**입니다. 
+오버엔지니어링(SQLite/FAISS/24시간 cross-server 시뮬레이션 등)을 배제하고, 실제 유저 체감 퀄리티(UX) 및 인지 정합성이 가장 높은 과제들을 3단계로 나누어 순차적으로 구현합니다.
 
 ---
 
-## <memory_engine_upgrade>
-### 1. 다중 인덱스 기억 저장소 (eMEM Architecture)
+## 🎯 Implementation Roadmap Overview
 
-현재 평면적인 딕셔너리(`ConcurrentDictionary`) 형태인 기억 저장소를 입체적으로 확장하여, 시공간 쿼리가 즉각적으로 가능하게 만듭니다.
-
-*   `[PLANNED]` **SQLite 관계형 인덱스 도입**: 인물, 객체, 행동(Who, What, Action)을 릴레이셔널 테이블로 매핑하여 명시적 질의 최적화.
-*   `[PLANNED]` **HNSW 벡터 인덱스 연동**: 단순 코사인 유사도를 넘어, FAISS나 HNSW를 도입하여 대규모 기억 중 가장 맥락이 유사한 과거 에피소드를 $O(\log N)$에 검색.
-*   `[PLANNED]` **R-Tree 공간 인덱스**: 에이전트가 "이 공간 근처에서 일어난 일"을 3D Bounding Box 반경(예: 20m 이내)으로 즉시 필터링할 수 있도록 R-Tree 캐싱 도입.
-</memory_engine_upgrade>
+- **Phase 7.1 (몰입감 및 반응성 극대화)**: C++ 지연 마스킹 & 긴급 인터럽트 시스템
+- **Phase 7.2 (인지 정합성 고도화)**: C# DAG 기반 믿음 연쇄 파기 & 소문 격리 버퍼
+- **Phase 7.3 (월드 스케줄링 최적화)**: 정적 장소 인원 캡 검사 & 경량 공간 필터링
 
 ---
 
-## <belief_revision_graph>
-### 2. 믿음 의존성 그래프 구축 (MAGMA & AGM Theory)
+## <phase_7_1_latency_masking>
+### Phase 7.1: LLM 지연 마스킹 및 로컬 긴급 인터럽트 (C++ Game Server Focus)
 
-현재 단순 `Confidence` 수치 연산에 의존하는 믿음 병합 로직을, 상호 의존성을 추적하는 **인지 그래프(Belief Dependency Graph)** 구조로 고도화합니다.
+LLM 응답 대기 시간(2~4초) 동안 에이전트가 돌부처처럼 굳는 현상을 방지하고, 위급 상황 발생 시 50ms 이내로 즉시 반응하게 합니다.
 
-*   `[PLANNED]` **메타데이터 의존성 엣지 추가**: `Belief` 클래스 내부에 `List<string> DependsOn`, `List<string> Supersedes` 속성을 추가.
-*   `[PLANNED]` **연쇄 수정 및 소멸(Cascade Eviction)**: 새로운 Core 사실(예: "왕은 죽었다")이 기존의 다른 사실("왕은 매일 산책한다")과 `Contradicts` 엣지로 충돌할 때, 하위 믿음들을 AGM 이론에 따라 일괄적으로 자동 강등(Demote)하거나 삭제.
-</belief_revision_graph>
-
----
-
-## <spatio_temporal_grounding>
-### 3. 시공간 정합성 및 이벤트 쿼리 (ARTEM)
-
-에이전트가 단순히 좌표로 이동하는 것을 넘어, **시간과 공간이 결합된 연속적 사건(STEM)**을 기억하고 인출하게 만듭니다.
-
-*   `[PLANNED]` **Temporal Window 기능**: `AcquiredAt` 타임스탬프를 단순 저장용이 아니라 쿼리용(`Between 14:00 and 16:00`)으로 검색 인덱스화.
-*   `[PLANNED]` **Deliberation Sandbox (심의 구역)**: 타인에게서 전해 들은 소문(`Heard`, `Overheard`)이 장기 기억(Core)으로 승격되기 전, 신뢰도 검증을 거치는 샌드박스 버퍼 시스템 도입.
-</spatio_temporal_grounding>
+*   `[PLANNED]` **C++ EnTT 로컬 대기 행동(Idle Fidgeting) 연동**: C++ 서버의 `BusyTag` 활성화 중, 무시하는 대신 주변 둘러보기, 가벼운 제스처, 서성임 등 로컬 대기 연출을 20Hz 루프에서 실시간 렌더링.
+*   `[PLANNED]` **gRPC Emergency Interrupt (`grpc::ClientContext::TryCancel`)**: 대화/일정 추론 대기 중 플레이어의 물리적 타격이나 화재 등 위협 발생 시, 즉시 비동기 gRPC 요청을 취소하고 로컬 전투/도망 행동 상태 머신으로 제어권을 강제 가로채기.
+</phase_7_1_latency_masking>
 
 ---
 
-## <simulation_sandbox>
-### 4. 일일 스케줄 프리롤아웃 (L2 Simulator)
+## <phase_7_2_cognitive_realism>
+### Phase 7.2: DAG 기반 믿음 연쇄 파기 및 소문 격리 버퍼 (C# AI Engine Focus)
 
-LLM이 24시간 스케줄을 텍스트로 찍어내는 단계를 넘어, 정신적인 샌드박스 환경에서 갈등을 예측하는 시뮬레이터 기능을 도입합니다.
+NPC가 낡고 모순된 과거 정보를 계속 보유하는 결함을 수정하고, 허무맹랑한 소문을 듣자마자 맹목적으로 믿는 현상을 방지합니다.
 
-*   `[PLANNED]` **L2 Simulator 도입**: `DailyPlanService`가 스케줄을 확정하기 전, 서버 내부의 별도 백그라운드 샌드박스에서 이동 동선과 인구 밀집도를 미리 시뮬레이션(Pre-Rollout). 병목이나 대인 관계 충돌이 예상되면 스케줄을 자체 폐기하고 2차 재생성(L3 Evolver 루프).
-*   `[PLANNED]` **행동 거부(Veto) 로직 확장**: 현재 `RollMeditate(80% 거부)`와 같은 룰 기반 행동 캔슬을 넘어, 시뮬레이션 결과에 기반한 자율적 Veto 시스템 구축.
-</simulation_sandbox>
+*   `[PLANNED]` **DAG 기반 믿음 연쇄 파기 (`MemoryBox.EvictCascade`)**: `Belief` 모델에 `DependsOn`, `Supersedes` 메타데이터를 추가. 상위 핵심 사실(Core Belief)이 변경되면 이와 모순되거나 연관된 하위 기억들을 연쇄적으로 일괄 파기/강등.
+*   `[PLANNED]` **소문 격리 버퍼 (`RumorSandbox`)**: 타인에게 들은 소문(`Heard`, `Overheard`)을 즉시 핵심 지식으로 인정하지 않고 완충 버퍼에 보관. 타인의 교차 증언이나 일일 성찰(Reflection)을 거쳐 검증된 소문만 `Core Belief`로 승격.
+</phase_7_2_cognitive_realism>
 
 ---
 
-## <latency_masking_behavior>
-### 5. LLM 대기 지연 마스킹 및 로컬 행동 트리 결합 (Latency Masking & Behavior Fallback)
+## <phase_7_3_schedule_optimization>
+### Phase 7.3: 월드 스케줄링 최적화 및 경량 공간 필터링 (C# & C++ Shared)
 
-LLM의 비동기 응답 대기 시간(수 초) 동안 에이전트가 정지하거나 멍청하게 서 있는 현상을 방지하고, 자연스러운 리액티브 행동을 실시간으로 렌더링합니다.
+과도한 백그라운드 시뮬레이션 연산 대신, 실용적인 룰 기반 캡(Capacity)과 필터링으로 스케줄 엉킴 및 과부하를 예방합니다.
 
-*   `[PLANNED]` **로컬 행동 트리(Local Behavior Tree) 연동**: C++ 서버의 EnTT 컨텍스트에 경량 Behavior Tree 또는 Utility System을 결합. LLM 추론 대기 상태(`BusyTag` 활성화 상태) 중 에이전트가 주변 환경을 탐색하거나(두리번거리기, 가벼운 제스처) 대기 전용 기본 액티비티를 자율 수행하도록 제어.
-*   `[PLANNED]` **결정론적 로컬 가로채기(Deterministic Intercept)**: LLM이 대사나 일정을 추론하는 도중, 월드 내에서 급박한 위협(플레이어의 물리 타격, 화재 등)이 발생하면 즉시 비동기 LLM 대기 작업을 취소(Cancel/Interrupt)하고 즉시 로컬 전투/도망 상태 머신으로 제어권을 가로채는 긴급 인터럽트 시스템 구축.
-</latency_masking_behavior>
+*   `[PLANNED]` **장소별 정적 인원 캡 검사 (`DailyPlanService`)**: LLM이 스케줄을 생성할 때 특정 시간에 동일 장소(예: 광장, 술집)로 과도한 인원이 몰리지 않도록 정적 인원 수 캡을 검사하고 자동 조율.
+*   `[PLANNED]` **기억 모델 내 경량 공간 태깅**: Complex DB(SQLite/FAISS) 없이, `Belief` 모델에 장소 태그/좌표 정보를 가볍게 부착하여 LINQ 수준에서 고성능 공간 필터링 지원.
+</phase_7_3_schedule_optimization>
