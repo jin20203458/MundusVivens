@@ -57,7 +57,8 @@ public class Program
         builder.Services.AddSingleton<IGoogleAuthService, GoogleAuthService>();
         builder.Services.AddSingleton<IGeminiApiService, GeminiApiService>();
         builder.Services.AddSingleton<IEmbeddingCache, EmbeddingCache>();
-        builder.Services.AddSingleton<IGossipEngine, GossipEngine>();
+        builder.Services.AddSingleton<IBeliefEngine, BeliefEngine>();
+        builder.Services.AddSingleton<IWorldContextService, WorldContextService>();
         builder.Services.AddSingleton<IDialogueOrchestrator, DialogueOrchestrator>();
         builder.Services.AddSingleton<IPlayerDialogueManager, PlayerDialogueManager>();
         builder.Services.AddSingleton<IWorldEventBroadcaster, WorldEventBroadcaster>();
@@ -70,13 +71,21 @@ public class Program
         builder.Services.AddSingleton<StaticDataLoader>(staticDataLoader);
 
         // 에이전트 인메모리 저장소 초기 로드 및 연동
+        var forceResetDb = config.GetValue<bool>("SimulationConfig:ForceResetDatabase", false);
         var agentsFromDb = persistenceService.LoadAllAgents();
-        if (agentsFromDb.IsEmpty)
+
+        // 통합 신념체계 개편에 따라 DB가 비었거나 레거시 스키마(Beliefs가 비어있음)인 경우 혹은 ForceResetDatabase가 활성화된 경우 강제 초기화
+        if (forceResetDb || agentsFromDb.IsEmpty || agentsFromDb.Values.All(a => a.MemoryBox.Beliefs.IsEmpty))
         {
-            Console.WriteLine("[System] Database is empty. Loading initial static configurations...");
+            Console.WriteLine($"[System] Resetting database with initial configurations from world_config.json (ForceResetDatabase: {forceResetDb})...");
             var initialAgents = staticDataLoader.LoadInitialAgents();
             persistenceService.ResetDatabase(initialAgents.Values);
             agentsFromDb = persistenceService.LoadAllAgents();
+        }
+        else
+        {
+            // DB를 초기화하지 않는 경우에도 world_config.json에서 지역 정보를 읽어 LocationCoordinateRegistry를 초기화해야 함
+            staticDataLoader.LoadInitialAgents();
         }
 
         builder.Services.AddSingleton<ConcurrentDictionary<string, AgentInstance>>(agentsFromDb);
@@ -142,12 +151,15 @@ public class Program
                 a.Status.Emotion,
                 a.Status.Activity,
                 a.Status.IsInConversation,
-                KnownGossips = a.KnownGossips.Values.Select(g => new
+                Beliefs = a.MemoryBox.Beliefs.Values.Select(b => new
                 {
-                    g.Gossip.GossipId,
-                    g.Gossip.Subject,
-                    g.Gossip.Content,
-                    g.SubjectiveBelief
+                    b.BeliefId,
+                    b.SubjectId,
+                    b.Content,
+                    b.Type,
+                    b.Confidence,
+                    b.Salience,
+                    b.EmotionalCharge
                 }),
                 Relationships = a.RelationshipMap.Values.Select(r => new
                 {
@@ -324,22 +336,20 @@ public class Program
                 return Results.NotFound(new { Error = $"대상 에이전트 '{request.TargetAgentId}'를 찾을 수 없습니다." });
             }
 
-            var gossip = new GossipItem
+            var belief = new Belief
             {
-                GossipId = $"gossip_{request.SubjectId}_{Guid.NewGuid().ToString().Substring(0, 5)}",
-                Subject = request.SubjectId,
+                BeliefId = $"belief_{request.SubjectId}_{Guid.NewGuid().ToString().Substring(0, 5)}",
+                SubjectId = request.SubjectId,
                 Content = request.Content,
+                Type = BeliefType.Heard,
+                Confidence = 0.8,
+                Salience = 1.0,
+                EmotionalCharge = 0.5,
                 SourceAgentId = "ExternalREST",
-                BaseCredibility = 80,
-                MutationCount = 0
+                AcquiredAt = DateTime.UtcNow
             };
 
-            targetAgent.KnownGossips[gossip.GossipId] = new KnownGossip
-            {
-                Gossip = gossip,
-                SubjectiveBelief = 0.8,
-                HasSharedWithOthers = false
-            };
+            targetAgent.MemoryBox.AddOrUpdateBelief(belief);
 
             try
             {

@@ -58,7 +58,10 @@ public class DailyPlanService : IDailyPlanService
             return schedule;
         }
 
-        return new List<DailyScheduleItem>();
+        // 캐시 미스 시 동적으로 폴백 스케줄을 생성하여 캐싱 (새로 등록된 NPC 지원)
+        var fallbackSchedule = GetFallbackSchedule(agentId);
+        _cachedSchedules[agentId] = fallbackSchedule;
+        return fallbackSchedule;
     }
 
     public async Task PerformReflectionAndGenerateSchedulesAsync(int tickNumber, CancellationToken cancellationToken = default)
@@ -104,14 +107,18 @@ public class DailyPlanService : IDailyPlanService
 
     private async Task ReflectOnEpisodesAsync(AgentInstance agent, CancellationToken cancellationToken)
     {
-        var episodes = agent.MemoryBox.EpisodicMemories.ToList();
-        if (episodes.Count == 0)
+        // 오늘 획득한 목격담 및 대화 사건 필터링
+        var todayWitnessed = agent.MemoryBox.Beliefs.Values
+            .Where(b => b.Type == BeliefType.Witnessed && (DateTime.UtcNow - b.AcquiredAt).TotalDays <= 1.0)
+            .ToList();
+
+        if (todayWitnessed.Count == 0)
         {
             Console.WriteLine($"[Reflection] 에이전트 '{agent.Persona.Name}'는 오늘 특별한 사건(대화)이 없어 일상 요약 성찰을 진행합니다.");
             return;
         }
 
-        string episodesList = string.Join("\n", episodes.Select(e => $"- [{e.Timestamp:HH:mm}] {e.TargetName}과의 대화 요약: {e.Summary}"));
+        string episodesList = string.Join("\n", todayWitnessed.Select(b => $"- [{b.AcquiredAt:HH:mm}] 사건내용: {b.Content}"));
 
         string prompt = $$"""
 <role>가상 세계 NPC [{{agent.Persona.Name}}]의 자아성찰(Reflection) 시스템</role>
@@ -119,14 +126,13 @@ public class DailyPlanService : IDailyPlanService
 
 <rules>
 1. 오늘 겪은 단기 에피소드들을 종합하여 NPC가 깊이 깨닫거나 가치관에 반영할 장기 기억을 1~2개 도출하십시오.
-2. 각 장기 기억은 NPC의 페르소나, 핵심 가치관, Faction(진영) 및 에피소드를 종합적으로 분석하여 작성되어야 합니다.
+2. 각 장기 기억은 NPC의 페르소나, 핵심 가치관, 에피소드 및 기존 핵심 신념(Core Beliefs)들을 종합적으로 분석하여 작성되어야 합니다.
 3. 오직 아래 지정된 JSON 포맷의 데이터만 출력하십시오.
 </rules>
 
 <context>
 [NPC 페르소나]
 - 이름/직업: {{agent.Persona.Name}} / {{agent.Persona.Job}}
-- Faction: {{agent.Persona.Faction}}
 - 성격/말투: {{agent.Persona.ToneStyle}}
 - 배경 이야기: {{agent.Persona.Backstory}}
 - 핵심 가치관: {{agent.Persona.CoreValues}}
@@ -163,35 +169,38 @@ public class DailyPlanService : IDailyPlanService
             {
                 if (string.IsNullOrWhiteSpace(fact.Content)) continue;
 
-                // 기존 장기 기억 용량 제한 관리
-                if (agent.MemoryBox.CoreMemories.Count >= MemoryBox.MaxCoreMemories)
+                // 새로운 깨달음을 Witnessed 타입의 Belief로 통합 저장 (성찰 기억)
+                var reflectionBelief = new Belief
                 {
-                    // 중요도가 가장 낮은 것 제거
-                    var minFact = agent.MemoryBox.CoreMemories.OrderBy(f => f.Importance).FirstOrDefault();
-                    if (minFact != null)
-                    {
-                        agent.MemoryBox.CoreMemories.Remove(minFact);
-                    }
-                }
+                    BeliefId = $"belief_reflection_{Guid.NewGuid().ToString().Substring(0, 5)}",
+                    SubjectId = agent.AgentId,
+                    Content = fact.Content,
+                    Type = BeliefType.Witnessed,
+                    Confidence = Math.Clamp(fact.Importance / 10.0, 0.1, 1.0),
+                    Salience = 1.0,
+                    EmotionalCharge = Math.Clamp((fact.Importance / 10.0) * 0.5, 0.0, 1.0),
+                    AcquiredAt = DateTime.UtcNow
+                };
 
-                agent.MemoryBox.CoreMemories.Add(new CoreFact(fact.Content, fact.Importance));
-                Console.WriteLine($"🧠 [Memory Reflection] {agent.Persona.Name}에게 새로운 장기 기억 추가: \"{fact.Content}\" (중요도: {fact.Importance})");
-            }
-
-            // 성찰에 성공했으므로 단기 에피소드 메모리 정리 (토큰 절약 및 망각 기획 반영)
-            // 최근 대화의 연속성을 위해 완전히 지우지 않고 큐의 절반만 비우거나, 15개 초과분을 비움
-            while (agent.MemoryBox.EpisodicMemories.Count > 3)
-            {
-                agent.MemoryBox.EpisodicMemories.TryDequeue(out _);
+                agent.MemoryBox.AddOrUpdateBelief(reflectionBelief);
+                Console.WriteLine($"🧠 [Memory Reflection] {agent.Persona.Name}에게 성찰 기억 추가: \"{fact.Content}\" (중요도: {fact.Importance})");
             }
         }
     }
 
     private async Task<List<DailyScheduleItem>> GenerateDailyPlanAsync(AgentInstance agent, CancellationToken cancellationToken)
     {
-        string coreMemoriesList = agent.MemoryBox.CoreMemories.Any()
-            ? string.Join("\n", agent.MemoryBox.CoreMemories.Select(cf => $"- {cf.Content} (중요도: {cf.Importance})"))
+        // 중요도 순 Top-10 믿음 목록 추출
+        var sortedBeliefs = agent.MemoryBox.Beliefs.Values
+            .OrderByDescending(b => b.Importance)
+            .Take(10)
+            .ToList();
+
+        string coreMemoriesList = sortedBeliefs.Any()
+            ? string.Join("\n", sortedBeliefs.Select(b => $"- {b.Content} (중요도: {b.Importance:F2})"))
             : "마음에 간직하고 있는 특별한 장기 기억이 없습니다.";
+
+        string locationList = LocationCoordinateRegistry.GetPromptLocationList();
 
         string prompt = $$"""
 <role>NPC [{{agent.Persona.Name}}]의 하루 계획(Daily Schedule) 수립 시스템</role>
@@ -199,7 +208,7 @@ public class DailyPlanService : IDailyPlanService
 
 <rules>
 1. 0시부터 23시까지의 일정이 빈 틈 없이 연속적이어야 합니다. (예: 0~7, 7~10, 10~15, 15~18, 18~22, 22~23)
-2. NPC의 직업과 Faction(진영), 대화 상대들과의 관계를 일정에 자연스럽게 녹여내십시오. 
+2. NPC의 직업과 소속 진영(기억 및 신념 참고), 대화 상대들과의 관계를 일정에 자연스럽게 녹여내십시오. 
 3. 목표 장소(target_location)는 반드시 [이동 가능한 장소 목록] 중 하나여야 합니다. (정확히 일치 필수)
 4. 24시간 계획을 3~6개의 시간대로 나누어 짜주십시오. 시작 시간과 종료 시간은 반드시 정수(0~23)여야 합니다.
 5. 각 일정은 시작 시간, 종료 시간, 목표 장소, 해당 장소에서 할 구체적인 행동(activity)을 포함해야 합니다.
@@ -208,18 +217,10 @@ public class DailyPlanService : IDailyPlanService
 
 <context>
 [이동 가능한 장소 목록]
-- 영주 저택 (Manor)
-- 성당 (Church)
-- 경비 초소 (Guard Post)
-- 연금술 공방 (Alchemy Lab)
-- 마을 광장 (Square)
-- 대장간 (Forge)
-- 뒷골목 (Back Alley)
-- 술집 (Tavern)
+{{locationList}}
 
 [NPC 페르소나]
 - 이름/직업: {{agent.Persona.Name}} / {{agent.Persona.Job}}
-- Faction: {{agent.Persona.Faction}}
 - 성격: {{agent.Persona.ToneStyle}}
 - 배경 이야기: {{agent.Persona.Backstory}}
 - 핵심 가치관: {{agent.Persona.CoreValues}}
@@ -280,46 +281,29 @@ public class DailyPlanService : IDailyPlanService
 
     private string MapToValidLocation(string rawLocation)
     {
-        if (string.IsNullOrWhiteSpace(rawLocation)) return "마을 광장 (Square)";
-        
-        var lower = rawLocation.ToLower();
-        if (lower.Contains("저택") || lower.Contains("manor")) return "영주 저택 (Manor)";
-        if (lower.Contains("성당") || lower.Contains("church")) return "성당 (Church)";
-        if (lower.Contains("초소") || lower.Contains("경비") || lower.Contains("guard")) return "경비 초소 (Guard Post)";
-        if (lower.Contains("연금") || lower.Contains("공방") || lower.Contains("alchemy") || lower.Contains("lab")) return "연금술 공방 (Alchemy Lab)";
-        if (lower.Contains("대장간") || lower.Contains("forge")) return "대장간 (Forge)";
-        if (lower.Contains("골목") || lower.Contains("alley")) return "뒷골목 (Back Alley)";
-        if (lower.Contains("술집") || lower.Contains("tavern")) return "술집 (Tavern)";
-        
-        return "마을 광장 (Square)"; // 기본값
+        return LocationCoordinateRegistry.ParseLocation(rawLocation);
     }
 
     private List<DailyScheduleItem> GetFallbackSchedule(string agentId)
     {
         var list = new List<DailyScheduleItem>();
-        if (agentId == "npc_kyle")
+        var agents = _agentsAccessor();
+        string location = "광장 (Square)";
+        
+        if (agents.TryGetValue(agentId, out var agent))
         {
-            list.Add(new DailyScheduleItem { StartHour = 0, EndHour = 7, TargetLocation = "성당 (Church)", Activity = "취침 및 휴식" });
-            list.Add(new DailyScheduleItem { StartHour = 7, EndHour = 12, TargetLocation = "성당 (Church)", Activity = "아침 기도 및 예배 조율" });
-            list.Add(new DailyScheduleItem { StartHour = 12, EndHour = 14, TargetLocation = "광장 (Square)", Activity = "산책 및 주민들과 교류" });
-            list.Add(new DailyScheduleItem { StartHour = 14, EndHour = 19, TargetLocation = "성당 (Church)", Activity = "오후 예배 및 성전 청소" });
-            list.Add(new DailyScheduleItem { StartHour = 19, EndHour = 22, TargetLocation = "술집 (Tavern)", Activity = "저녁 식사 및 음료 섭취" });
-            list.Add(new DailyScheduleItem { StartHour = 22, EndHour = 23, TargetLocation = "성당 (Church)", Activity = "하루 묵상 및 취침 준비" });
+            location = agent.Status.CurrentLocation;
         }
-        else if (agentId == "npc_eva")
+
+        if (string.IsNullOrWhiteSpace(location))
         {
-            list.Add(new DailyScheduleItem { StartHour = 0, EndHour = 8, TargetLocation = "술집 (Tavern)", Activity = "취침 및 개인 정비" });
-            list.Add(new DailyScheduleItem { StartHour = 8, EndHour = 11, TargetLocation = "광장 (Square)", Activity = "아침 장보기 및 가벼운 대화" });
-            list.Add(new DailyScheduleItem { StartHour = 11, EndHour = 18, TargetLocation = "술집 (Tavern)", Activity = "낮 시간 개장 준비 및 맥주잔 닦기" });
-            list.Add(new DailyScheduleItem { StartHour = 18, EndHour = 23, TargetLocation = "술집 (Tavern)", Activity = "저녁 시간 맥주 판매 및 손님들과 대화" });
+            location = LocationCoordinateRegistry.GetAllSemanticNames().FirstOrDefault() ?? "Unknown";
         }
-        else // npc_bart
-        {
-            list.Add(new DailyScheduleItem { StartHour = 0, EndHour = 8, TargetLocation = "술집 (Tavern)", Activity = "취침" });
-            list.Add(new DailyScheduleItem { StartHour = 8, EndHour = 12, TargetLocation = "광장 (Square)", Activity = "훈련 및 무기 점검" });
-            list.Add(new DailyScheduleItem { StartHour = 12, EndHour = 18, TargetLocation = "광장 (Square)", Activity = "경계 근무 및 마을 순찰" });
-            list.Add(new DailyScheduleItem { StartHour = 18, EndHour = 23, TargetLocation = "술집 (Tavern)", Activity = "술 마시며 피로 해소" });
-        }
+
+        list.Add(new DailyScheduleItem { StartHour = 0, EndHour = 8, TargetLocation = location, Activity = "취침 및 개인 정비" });
+        list.Add(new DailyScheduleItem { StartHour = 8, EndHour = 18, TargetLocation = location, Activity = "일상 활동 수행 및 대기" });
+        list.Add(new DailyScheduleItem { StartHour = 18, EndHour = 23, TargetLocation = location, Activity = "저녁 휴식 및 대기" });
+        
         return list;
     }
 }

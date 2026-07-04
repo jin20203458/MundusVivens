@@ -21,7 +21,7 @@ namespace MundusVivens.Prototype.Services
     public class PlayerDialogueManager : IPlayerDialogueManager
     {
         private readonly IGeminiApiService _apiService;
-        private readonly IGossipEngine _gossipEngine;
+        private readonly IBeliefEngine _beliefEngine;
         private readonly IWorldEventBroadcaster _broadcaster;
         private readonly MemoryEventLogger _memoryLogger;
         private readonly Func<ConcurrentDictionary<string, AgentInstance>> _agentsAccessor;
@@ -33,7 +33,7 @@ namespace MundusVivens.Prototype.Services
 
         public PlayerDialogueManager(
             IGeminiApiService apiService,
-            IGossipEngine gossipEngine,
+            IBeliefEngine beliefEngine,
             IWorldEventBroadcaster broadcaster,
             MemoryEventLogger memoryLogger,
             Func<ConcurrentDictionary<string, AgentInstance>> agentsAccessor,
@@ -41,7 +41,7 @@ namespace MundusVivens.Prototype.Services
             IPersistenceService persistence)
         {
             _apiService = apiService;
-            _gossipEngine = gossipEngine;
+            _beliefEngine = beliefEngine;
             _broadcaster = broadcaster;
             _memoryLogger = memoryLogger;
             _agentsAccessor = agentsAccessor;
@@ -93,42 +93,54 @@ namespace MundusVivens.Prototype.Services
 
             // 2. Greeting 생성
             var rel = GetOrCreateRelationship(npc, playerId);
-            var relevantEpisodes = npc.MemoryBox.EpisodicMemories
-                .Where(e => (e.InvolvedAgentIds != null && e.InvolvedAgentIds.Contains(playerId)) || e.TargetName == player.Persona.Name)
-                .Select(e => $"[{e.Timestamp:HH:mm}] {e.Summary}");
+            // 관련 기억 및 믿음 목록 선출
+            var sortedBeliefs = ComputeTopKBeliefs(npc, player);
 
-            string relevantMemoriesStr = string.Join("\n", relevantEpisodes);
-            if (npc.MemoryBox.CoreMemories.Any())
+            var beliefLines = new List<string>();
+            foreach (var b in sortedBeliefs)
             {
-                relevantMemoriesStr += "\n[나의 평생 장기 기억]\n" + string.Join("\n", npc.MemoryBox.CoreMemories.Select(c => $"- {c.Content}"));
+                double daysPassed = (DateTime.UtcNow - b.AcquiredAt).TotalDays;
+                string timeTag = daysPassed switch
+                {
+                    < 0.04 => "[방금 전]",
+                    < 1.0 => "[오늘]",
+                    < 2.0 => "[어제]",
+                    < 7.0 => $"[{(int)daysPassed}일 전]",
+                    < 30.0 => $"[{(int)(daysPassed / 7.0)}주 전]",
+                    < 365.0 => $"[{(int)(daysPassed / 30.0)}달 전]",
+                    _ => $"[{(int)(daysPassed / 365.0)}년 전]"
+                };
+                string beliefTypeDesc = b.Type switch
+                {
+                    BeliefType.Core => "신념",
+                    BeliefType.Witnessed => "직접 본 사건",
+                    BeliefType.Heard => "전해 들은 이야기",
+                    BeliefType.Overheard => "얼핏 엿들은 이야기",
+                    _ => "기억"
+                };
+                beliefLines.Add($"- {timeTag} {beliefTypeDesc} (확신도: {(int)(b.Confidence * 100)}%): \"{b.Content}\"");
             }
 
+            string relevantMemoriesStr = string.Join("\n", beliefLines);
             if (string.IsNullOrWhiteSpace(relevantMemoriesStr))
             {
                 relevantMemoriesStr = "플레이어에 대한 특별한 과거 기억이 없습니다.";
             }
 
-            // Top-K 기억을 먼저 확정한 뒤, 그 안에서 전파 소문을 선택
-            var sortedGossips = ComputeTopKGossips(npc, player);
-
             // 소문 공유 확인 (기억 안에서 선택)
-            var gossipToShare = _gossipEngine.SelectGossipToShare(npc, player, sortedGossips);
-            session.NpcGossipIdToShare = gossipToShare?.Gossip.GossipId;
+            var beliefToShare = _beliefEngine.SelectBeliefToShare(npc, player, sortedBeliefs);
+            session.NpcBeliefIdToShare = beliefToShare?.BeliefId;
 
             string gossipSnippet = "없음 (평범하게 첫 인사를 건네십시오)";
-            if (gossipToShare != null)
+            if (beliefToShare != null)
             {
-                gossipSnippet = $"[비밀 소문 폭로 지시] 대상: {gossipToShare.Gossip.Subject}, 소문 내용: \"{gossipToShare.Gossip.Content}\"\n" +
+                gossipSnippet = $"[비밀 소문 폭로 지시] 대상: {beliefToShare.SubjectId}, 소문 내용: \"{beliefToShare.Content}\"\n" +
                     "지시: 첫 인사 대화 중 자연스럽게 플레이어에게 이 소문을 흘리거나 질문해 보십시오. (예: '마침 잘 왔군, 혹시 카일 소식 들었나?') 소문의 대상 인물 실명을 언급하십시오.";
             }
 
-            string knownGossipsStr = string.Join("\n", sortedGossips.Select(kg => $"- {kg.Gossip.Content} (확신도: {kg.SubjectiveBelief:F2})"));
-            if (string.IsNullOrWhiteSpace(knownGossipsStr))
-            {
-                knownGossipsStr = "알고 있는 특별한 소문이 없습니다.";
-            }
+            string knownGossipsStr = relevantMemoriesStr;
 
-            Console.WriteLine($"📋 [소문 압축] {npc.Persona.Name}: {npc.KnownGossips.Count} -> {sortedGossips.Count}개 선별 (플레이어 대화 시작)");
+            Console.WriteLine($"📋 [소문/믿음 압축] {npc.Persona.Name}: {npc.MemoryBox.Beliefs.Count} -> {sortedBeliefs.Count}개 선별 (플레이어 대화 시작)");
 
             string systemPrompt = $$"""
 <role>가상 세계 시뮬레이션 NPC [{{npc.Persona.Name}}]</role>
@@ -199,45 +211,57 @@ namespace MundusVivens.Prototype.Services
 
             // NPC 응답 생성
             var rel = GetOrCreateRelationship(npc, session.PlayerId);
-            var relevantEpisodes = npc.MemoryBox.EpisodicMemories
-                .Where(e => (e.InvolvedAgentIds != null && e.InvolvedAgentIds.Contains(session.PlayerId)) || e.TargetName == player.Persona.Name)
-                .Select(e => $"[{e.Timestamp:HH:mm}] {e.Summary}");
+            // 관련 기억 및 믿음 목록 선출
+            var sortedBeliefs = ComputeTopKBeliefs(npc, player);
 
-            string relevantMemoriesStr = string.Join("\n", relevantEpisodes);
-            if (npc.MemoryBox.CoreMemories.Any())
+            var beliefLines = new List<string>();
+            foreach (var b in sortedBeliefs)
             {
-                relevantMemoriesStr += "\n[나의 평생 장기 기억]\n" + string.Join("\n", npc.MemoryBox.CoreMemories.Select(c => $"- {c.Content}"));
+                double daysPassed = (DateTime.UtcNow - b.AcquiredAt).TotalDays;
+                string timeTag = daysPassed switch
+                {
+                    < 0.04 => "[방금 전]",
+                    < 1.0 => "[오늘]",
+                    < 2.0 => "[어제]",
+                    < 7.0 => $"[{(int)daysPassed}일 전]",
+                    < 30.0 => $"[{(int)(daysPassed / 7.0)}주 전]",
+                    < 365.0 => $"[{(int)(daysPassed / 30.0)}달 전]",
+                    _ => $"[{(int)(daysPassed / 365.0)}년 전]"
+                };
+                string beliefTypeDesc = b.Type switch
+                {
+                    BeliefType.Core => "신념",
+                    BeliefType.Witnessed => "직접 본 사건",
+                    BeliefType.Heard => "전해 들은 이야기",
+                    BeliefType.Overheard => "얼핏 엿들은 이야기",
+                    _ => "기억"
+                };
+                beliefLines.Add($"- {timeTag} {beliefTypeDesc} (확신도: {(int)(b.Confidence * 100)}%): \"{b.Content}\"");
             }
 
+            string relevantMemoriesStr = string.Join("\n", beliefLines);
             if (string.IsNullOrWhiteSpace(relevantMemoriesStr))
             {
                 relevantMemoriesStr = "플레이어에 대한 특별한 과거 기억이 없습니다.";
             }
 
-            // Top-K 기억 확정 후 그 안에서 전파 소문 선택
-            var sortedGossips = ComputeTopKGossips(npc, player);
-
             // 소문 공유 확인 (세션 시작 시 선택된 소문 유지)
-            KnownGossip? gossipToShare = null;
-            if (!string.IsNullOrWhiteSpace(session.NpcGossipIdToShare))
+            Belief? beliefToShare = null;
+            if (!string.IsNullOrWhiteSpace(session.NpcBeliefIdToShare))
             {
-                npc.KnownGossips.TryGetValue(session.NpcGossipIdToShare, out gossipToShare);
+                npc.MemoryBox.Beliefs.TryGetValue(session.NpcBeliefIdToShare, out beliefToShare);
             }
 
             string gossipSnippet = "없음 (플레이어의 질문에 성실히 대답하십시오)";
-            if (gossipToShare != null)
+            if (beliefToShare != null)
             {
-                gossipSnippet = $"[비밀 소문 폭로 지시] 대상: {gossipToShare.Gossip.Subject}, 소문 내용: \"{gossipToShare.Gossip.Content}\"\n" +
+                gossipSnippet = $"[비밀 소문 폭로 지시] 대상: {beliefToShare.SubjectId}, 소문 내용: \"{beliefToShare.Content}\"\n" +
                     "지시: 기회가 된다면 대화 흐름 중 자연스럽게 플레이어에게 이 소문을 흘리십시오. 소문의 대상 인물 실명을 언급하십시오.";
             }
 
-            string knownGossipsStr = string.Join("\n", sortedGossips.Select(kg => $"- {kg.Gossip.Content} (확신도: {kg.SubjectiveBelief:F2})"));
-            if (string.IsNullOrWhiteSpace(knownGossipsStr))
-            {
-                knownGossipsStr = "알고 있는 특별한 소문이 없습니다.";
-            }
+            string knownGossipsStr = relevantMemoriesStr;
 
-            Console.WriteLine($"📋 [소문 압축] {npc.Persona.Name}: {npc.KnownGossips.Count} -> {sortedGossips.Count}개 선별 (플레이어 메시지 전송)");
+            Console.WriteLine($"📋 [소문/믿음 압축] {npc.Persona.Name}: {npc.MemoryBox.Beliefs.Count} -> {sortedBeliefs.Count}개 선별 (플레이어 메시지 전송)");
 
             string summarySection = session.ConversationSummary != string.Empty ? $"\n[이전 대화 요약]\n{session.ConversationSummary}\n" : string.Empty;
             string systemPrompt = $$"""
@@ -320,15 +344,15 @@ namespace MundusVivens.Prototype.Services
             // Gemini 사후 분석 요청
             string postProcessSystemPrompt = $$"""
 <role>월드 관리인 (대화 분석 시스템)</role>
-<task>두 에이전트 간의 대화 내용을 분석하여 관계 변화 및 전파된 소문 정보를 기록하십시오.</task>
+<task>두 에이전트 간의 대화 내용을 분석하여 관계 변화 및 전파된 정보(믿음)를 기록하십시오.</task>
 
 <context>
 [대화 참여자]
 - 에이전트 A: {{player.Persona.Name}} (ID: {{player.NumericId}})
 - 에이전트 B: {{npc.Persona.Name}} (ID: {{npc.NumericId}})
 
-[소문 후보 목록]
-{{string.Join("\n", npc.KnownGossips.Values.Select(kg => $"- [{kg.Gossip.GossipId}] {kg.Gossip.Subject}에 관한 소문: \"{kg.Gossip.Content}\""))}}
+[정보 및 신념 후보 목록]
+{{string.Join("\n", npc.MemoryBox.Beliefs.Values.Where(b => b.Type != BeliefType.Core).Select(b => $"- [{b.BeliefId}] {b.SubjectId}에 관한 정보: \"{b.Content}\""))}}
 
 [대화 원본]
 <chat_log>
@@ -339,12 +363,12 @@ namespace MundusVivens.Prototype.Services
 <rules>
 1. summary: 대화 요약을 3인칭 소설 기술처럼 작성하되, 수치(골드, 수치 스탯 등)는 배제하고 1문장으로 요약하십시오.
 2. relationship_changes: 대화 내용을 바탕으로 서로에 대한 호감도(liking)와 신뢰도(trust) 변화량을 -10에서 +10 사이 정수값(delta)으로 산출하십시오. 친화적이면 +, 다툼/불신이 커지면 -입니다.
-3. gossips_exchanged: 대화 중 소문이나 특정 정보가 전파되었는지 분석하십시오.
-   - gossip_id: 위 [소문 후보 목록] 중에서, 대화 중 실제로 전파(발설)된 소문의 '소문 ID'를 찾아 기입하십시오. 매칭되는 소문이 없는 새로운 소문일 경우 빈 문자열("")로 기입하십시오.
-   - subject: 소문의 대상이 된 인물의 AgentId (예: 'npc_kyle'). 대화에서 해당 대상이 직접 지목된 경우에만 추출하십시오.
-   - content: 대화 중 발설된 소문의 핵심 요약 내용.
+3. beliefs_shared: 대화 중 소문이나 특정 정보가 전파되었는지 분석하십시오.
+   - belief_id: 위 [정보 및 신념 후보 목록] 중에서, 대화 중 실제로 전파(발설)된 정보의 '믿음 ID'를 찾아 기입하십시오. 매칭되는 정보가 없는 새로운 정보일 경우 빈 문자열("")로 기입하십시오.
+   - subject: 정보의 대상이 된 인물의 AgentId (예: 'npc_kyle'). 대화에서 해당 대상이 직접 지목된 경우에만 추출하십시오.
+   - content: 대화 중 발설된 정보의 핵심 요약 내용.
    - credibility_rating: 들려온 이야기에 대해 화자가 보인 신빙성 정도 (0 ~ 100).
-   - speaker_id: 소문을 말한 화자의 AgentId.
+   - speaker_id: 정보를 말한 화자의 AgentId.
 4. 분석 결과는 오직 아래 지정된 JSON 포맷으로만 출력하십시오.
 </rules>
 
@@ -357,7 +381,7 @@ namespace MundusVivens.Prototype.Services
     "liking_delta_b_to_a": 0,
     "trust_delta_b_to_a": 0
   },
-  "gossips_exchanged": []
+  "beliefs_shared": []
 }
 </output_format>
 """;
@@ -377,20 +401,28 @@ namespace MundusVivens.Prototype.Services
                 summary = analysis.Summary;
                 var timestamp = DateTime.Now;
 
-                // 에피소드 저장
-                player.MemoryBox.AddEpisode(new Episode
+                // 대화 사건 자체를 Witnessed Belief로 저장
+                player.MemoryBox.AddOrUpdateBelief(new Belief
                 {
-                    Timestamp = timestamp,
-                    TargetName = npc.Persona.Name,
-                    Summary = summary,
-                    InvolvedAgentIds = new List<string> { player.AgentId, npc.AgentId }
+                    BeliefId = $"belief_dialogue_{Guid.NewGuid().ToString().Substring(0, 5)}",
+                    SubjectId = player.AgentId,
+                    Content = $"{npc.Persona.Name}와 대화함: {summary}",
+                    Type = BeliefType.Witnessed,
+                    Confidence = 1.0,
+                    Salience = 1.0,
+                    EmotionalCharge = 0.3,
+                    AcquiredAt = timestamp
                 });
-                npc.MemoryBox.AddEpisode(new Episode
+                npc.MemoryBox.AddOrUpdateBelief(new Belief
                 {
-                    Timestamp = timestamp,
-                    TargetName = player.Persona.Name,
-                    Summary = summary,
-                    InvolvedAgentIds = new List<string> { player.AgentId, npc.AgentId }
+                    BeliefId = $"belief_dialogue_{Guid.NewGuid().ToString().Substring(0, 5)}",
+                    SubjectId = npc.AgentId,
+                    Content = $"{player.Persona.Name}와 대화함: {summary}",
+                    Type = BeliefType.Witnessed,
+                    Confidence = 1.0,
+                    Salience = 1.0,
+                    EmotionalCharge = 0.3,
+                    AcquiredAt = timestamp
                 });
 
                 // 관계 갱신 및 이벤트 브로드캐스트
@@ -441,120 +473,106 @@ namespace MundusVivens.Prototype.Services
                 };
                 await _broadcaster.BroadcastAsync(relEventBToA);
 
-                // 소문 전파 처리
-                if (analysis.GossipsExchanged != null)
+                // 정보(믿음) 전파 처리
+                if (analysis.BeliefsShared != null)
                 {
-                    foreach (var gossipElem in analysis.GossipsExchanged)
+                    foreach (var beliefElem in analysis.BeliefsShared)
                     {
-                        string subject = gossipElem.Subject;
-                        string content = gossipElem.Content;
-                        string speakerId = gossipElem.SpeakerId;
+                        string subject = beliefElem.Subject;
+                        string content = beliefElem.Content;
+                        string speakerId = beliefElem.SpeakerId;
 
                         if (string.IsNullOrWhiteSpace(subject) || string.IsNullOrWhiteSpace(content)) continue;
 
                         AgentInstance speaker = speakerId == player.AgentId ? player : npc;
                         AgentInstance listener = speakerId == player.AgentId ? npc : player;
 
-                        GossipItem? originalGossip = null;
+                        Belief? originalBelief = null;
 
-                        if (!string.IsNullOrWhiteSpace(gossipElem.GossipId))
+                        if (!string.IsNullOrWhiteSpace(beliefElem.BeliefId))
                         {
-                            if (speaker.KnownGossips.TryGetValue(gossipElem.GossipId, out var knownGossip))
+                            if (speaker.MemoryBox.Beliefs.TryGetValue(beliefElem.BeliefId, out var kb))
                             {
-                                originalGossip = knownGossip.Gossip;
+                                originalBelief = kb;
                             }
                         }
 
-                        // Tier 2: LLM의 ID 매칭 실패 시, 이번 대화 시작 시 공유하기로 지정되었던 소문과 비교
-                        if (originalGossip == null && speaker.AgentId == npc.AgentId && !string.IsNullOrWhiteSpace(session.NpcGossipIdToShare))
+                        // Tier 2: 이번 세션에 정했던 공유 대상 정보와 비교
+                        if (originalBelief == null && speaker.AgentId == npc.AgentId && !string.IsNullOrWhiteSpace(session.NpcBeliefIdToShare))
                         {
-                            if (npc.KnownGossips.TryGetValue(session.NpcGossipIdToShare, out var targetGossipToShare) && targetGossipToShare.Gossip.Subject == subject)
+                            if (npc.MemoryBox.Beliefs.TryGetValue(session.NpcBeliefIdToShare, out var targetBeliefToShare) && targetBeliefToShare.SubjectId == subject)
                             {
-                                originalGossip = targetGossipToShare.Gossip;
+                                originalBelief = targetBeliefToShare;
                             }
                         }
 
-                        // Tier 3 (신규): 임베딩 유사도 기반 매칭
-                        if (originalGossip == null)
+                        // Tier 3: 임베딩 유사도 기반 매칭
+                        if (originalBelief == null)
                         {
-                            var candidates = speaker.KnownGossips.Values
-                                .Where(kg => kg.Gossip.Subject == subject)
+                            var candidates = speaker.MemoryBox.Beliefs.Values
+                                .Where(b => b.SubjectId == subject && b.Type != BeliefType.Core)
                                 .ToList();
 
                             double maxSim = 0;
-                            GossipItem? bestMatch = null;
+                            Belief? bestMatch = null;
 
                             var contentEmbedding = await _embeddingCache.GetOrComputeEmbeddingAsync(content, async t => await _apiService.GetEmbeddingAsync(t));
 
                             foreach (var cand in candidates)
                             {
-                                if (cand.Gossip.ContentEmbedding == null)
+                                if (cand.ContentEmbedding == null)
                                 {
-                                    cand.Gossip.ContentEmbedding = await _embeddingCache.GetOrComputeEmbeddingAsync(cand.Gossip.Content, async t => await _apiService.GetEmbeddingAsync(t));
+                                    cand.ContentEmbedding = await _embeddingCache.GetOrComputeEmbeddingAsync(cand.Content, async t => await _apiService.GetEmbeddingAsync(t));
                                 }
 
-                                double sim = EmbeddingCache.CosineSimilarity(contentEmbedding, cand.Gossip.ContentEmbedding);
+                                double sim = EmbeddingCache.CosineSimilarity(contentEmbedding, cand.ContentEmbedding);
                                 if (sim > maxSim)
                                 {
                                     maxSim = sim;
-                                    bestMatch = cand.Gossip;
+                                    bestMatch = cand;
                                 }
                             }
 
                             if (maxSim >= 0.82 && bestMatch != null)
                             {
-                                originalGossip = bestMatch;
-                                Console.WriteLine($"[PlayerDialogueManager] 🧬 [임베딩 매칭 성공] 추출된 소문과 화자의 기존 소문 유사도 {maxSim:F3} 매칭 성공 (ID: {originalGossip.GossipId})");
+                                originalBelief = bestMatch;
                             }
                         }
 
-
-
-                        if (originalGossip == null)
+                        if (originalBelief == null)
                         {
-                            originalGossip = new GossipItem
+                            originalBelief = new Belief
                             {
-                                GossipId = $"gossip_{subject}_{Guid.NewGuid().ToString().Substring(0, 5)}",
-                                Subject = subject,
+                                BeliefId = $"belief_{subject}_{Guid.NewGuid().ToString().Substring(0, 5)}",
+                                SubjectId = subject,
                                 Content = content,
+                                Type = BeliefType.Heard,
+                                Confidence = 0.7,
+                                Salience = 1.0,
+                                EmotionalCharge = 0.5,
                                 SourceAgentId = speaker.AgentId,
-                                BaseCredibility = 70
+                                AcquiredAt = DateTime.UtcNow
                             };
-                            speaker.KnownGossips[originalGossip.GossipId] = new KnownGossip
-                            {
-                                Gossip = originalGossip,
-                                SubjectiveBelief = 1.0,
-                                HasSharedWithOthers = true
-                            };
+                            speaker.MemoryBox.AddOrUpdateBelief(originalBelief);
                         }
 
-                        await _gossipEngine.ProcessGossipSharingAsync(speaker, listener, originalGossip, content);
+                        await _beliefEngine.ProcessBeliefSharingAsync(speaker, listener, originalBelief, content);
 
-                        // 소문 전파 실시간 이벤트 브로드캐스트
-                        bool isMutated = !originalGossip.Content.Trim().Equals(content.Trim(), StringComparison.OrdinalIgnoreCase);
-                        var gossipEvent = new WorldEvent
+                        // 실시간 이벤트 브로드캐스트
+                        bool isMutated = !originalBelief.Content.Trim().Equals(content.Trim(), StringComparison.OrdinalIgnoreCase);
+                        var beliefEvent = new WorldEvent
                         {
                             Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
-                            Gossip = new GossipEvent
+                            BeliefShare = new BeliefShareEvent
                             {
                                 SpeakerId = speaker.NumericId,
                                 ListenerId = listener.NumericId,
-                                SubjectId = AgentIdMapping.GetNumericId(originalGossip.Subject),
-                                GossipContent = content,
+                                SubjectId = AgentIdMapping.GetNumericId(originalBelief.SubjectId),
+                                Content = content,
                                 IsMutated = isMutated
                             }
                         };
-                        await _broadcaster.BroadcastAsync(gossipEvent);
-
-                        // 에피소드 귀속
-                        string subjectName = (subject == player.AgentId) ? player.Persona.Name : ((subject == npc.AgentId) ? npc.Persona.Name : subject);
-                        listener.MemoryBox.AddEpisode(new Episode
-                        {
-                            Timestamp = DateTime.Now,
-                            TargetName = speaker.Persona.Name,
-                            Summary = $"{speaker.Persona.Name}(으)로부터 {subjectName}에 대한 소문(\"{content}\")을 들었습니다.",
-                            InvolvedAgentIds = new List<string> { speaker.AgentId, listener.AgentId, subject }
-                        });
+                        await _broadcaster.BroadcastAsync(beliefEvent);
                     }
                 }
 
@@ -624,42 +642,37 @@ namespace MundusVivens.Prototype.Services
         }
 
         /// <summary>
-        /// 관계 감정, 와전 자극도, 미전파 우선순위를 반영한 Top-K 소문 기억 선별 헬퍼.
-        /// DialogueOrchestrator의 ComputeTopKGossips와 동일한 점수 공식을 사용합니다.
+        /// 관계 감정, 와전 자극도, 미전파 우선순위를 반영한 Top-K 믿음(기억) 선별 헬퍼.
         /// </summary>
-        private List<KnownGossip> ComputeTopKGossips(AgentInstance speaker, AgentInstance listener, int k = 3)
+        private List<Belief> ComputeTopKBeliefs(AgentInstance speaker, AgentInstance listener, int k = 10)
         {
-            _gossipEngine.DecayAgentGossips(speaker, _gossipEngine.CurrentTick);
-            _gossipEngine.DecayAgentGossips(listener, _gossipEngine.CurrentTick);
+            _beliefEngine.DecayBeliefs(speaker, _beliefEngine.CurrentTick);
+            _beliefEngine.DecayBeliefs(listener, _beliefEngine.CurrentTick);
 
-            return speaker.KnownGossips.Values
-                .Select(kg => {
-                    double score = kg.SubjectiveBelief; // 기본 확신도 (0.0 ~ 1.0)
+            return speaker.MemoryBox.Beliefs.Values
+                .Select(b => {
+                    double score = b.Importance; // 기본 중요도 식 (Confidence * 0.4 + Salience * 0.35 + EmotionalCharge * 0.25)
 
-                    // 당사자 인식 가중치: 대화 상대에 대한 소문을 살짝 의식 (+0.15)
-                    if (kg.Gossip.Subject == listener.AgentId)
+                    // 당사자 관련 가중치 추가
+                    if (b.SubjectId == listener.AgentId)
                         score += 0.15;
 
-                    // 미전파 소문 가중치: 아직 남에게 말하지 않은 따끈한 소문 우선 (+0.25)
-                    if (!kg.HasSharedWithOthers)
+                    // 아직 발설하지 않은 신념 가중치 추가
+                    if (!b.SharedWith.Contains(listener.AgentId))
                         score += 0.25;
 
-                    // 감정 연동 가중치: 소문 대상에 대한 감정이 강할수록 기억에 잘 남음 (max +0.4)
-                    if (speaker.RelationshipMap.TryGetValue(kg.Gossip.Subject, out var subjectRel))
+                    // 감정 및 관계에 의한 가중치 추가
+                    if (speaker.RelationshipMap.TryGetValue(b.SubjectId, out var subjectRel))
                         score += Math.Min(Math.Abs(subjectRel.Liking) / 250.0, 0.4);
 
-                    // 와전 자극도 가중치: 여러 입을 거친 자극적 소문이 더 기억에 남음 (max +0.25)
-                    score += Math.Min(kg.Gossip.MutationCount * 0.08, 0.25);
+                    // 와전 자극 가중치
+                    score += Math.Min(b.MutationCount * 0.08, 0.25);
 
-                    // 시간 신선도 가중치: 최근에 들은 소문이 더 잘 떠오름 (max +0.2)
-                    double secondsSinceAcquired = (DateTime.UtcNow - kg.AcquiredAt).TotalSeconds;
-                    score += Math.Max(0.0, (1.0 - secondsSinceAcquired / 1000.0) * 0.2);
-
-                    return new { Gossip = kg, Score = score };
+                    return new { Belief = b, Score = score };
                 })
                 .OrderByDescending(x => x.Score)
                 .Take(k)
-                .Select(x => x.Gossip)
+                .Select(x => x.Belief)
                 .ToList();
         }
 

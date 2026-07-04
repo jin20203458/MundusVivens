@@ -83,8 +83,8 @@ public class ConversationAnalysis
     [JsonPropertyName("relationship_changes")]
     public RelationshipChanges RelationshipChanges { get; set; } = new();
 
-    [JsonPropertyName("gossips_exchanged")]
-    public List<GossipExchangeInfo> GossipsExchanged { get; set; } = new();
+    [JsonPropertyName("beliefs_shared")]
+    public List<BeliefExchangeInfo> BeliefsShared { get; set; } = new();
 
     [JsonPropertyName("emotion_updates")]
     public List<EmotionUpdateInfo> EmotionUpdates { get; set; } = new();
@@ -97,6 +97,9 @@ public class EmotionUpdateInfo
 
     [JsonPropertyName("new_emotion")]
     public string NewEmotion { get; set; } = string.Empty;
+
+    [JsonPropertyName("intensity")]
+    public string Intensity { get; set; } = "MEDIUM";
 }
 
 public class RelationshipChanges
@@ -114,16 +117,16 @@ public class RelationshipChanges
     public int TrustDeltaBToA { get; set; } = 0;
 }
 
-public class GossipExchangeInfo
+public class BeliefExchangeInfo
 {
-    [JsonPropertyName("gossip_id")]
-    public string GossipId { get; set; } = string.Empty;
+    [JsonPropertyName("belief_id")]
+    public string BeliefId { get; set; } = string.Empty;
 
     [JsonPropertyName("subject")]
-    public string Subject { get; set; } = string.Empty;
+    public string Subject { get; set; } = string.Empty; // 정보의 주인공 (NPC ID 또는 이름)
 
     [JsonPropertyName("content")]
-    public string Content { get; set; } = string.Empty;
+    public string Content { get; set; } = string.Empty; // 실제 대화에서 왜곡/발설된 텍스트
 
     [JsonPropertyName("credibility_rating")]
     public int CredibilityRating { get; set; } = 50;
@@ -170,8 +173,8 @@ public class GroupConversationScript
     [JsonPropertyName("emotion_updates")]
     public List<EmotionUpdateInfo> EmotionUpdates { get; set; } = new();
 
-    [JsonPropertyName("gossips_exchanged")]
-    public List<GossipExchangeInfo> GossipsExchanged { get; set; } = new();
+    [JsonPropertyName("beliefs_shared")]
+    public List<BeliefExchangeInfo> BeliefsShared { get; set; } = new();
 
     [JsonPropertyName("next_jobs")]
     public List<NextJobDto> NextJobs { get; set; } = new();

@@ -1,11 +1,11 @@
 using System;
-using System.Collections.Generic;
+using System.Collections.Concurrent;
 
 namespace MundusVivens.Prototype.Services;
 
 public static class AgentIdMapping
 {
-    private static readonly Dictionary<string, uint> StringToNumericMap = new(StringComparer.OrdinalIgnoreCase)
+    private static readonly ConcurrentDictionary<string, uint> StringToNumericMap = new(new Dictionary<string, uint>(StringComparer.OrdinalIgnoreCase)
     {
         { "player", 1 },
         { "npc_eva", 2 },
@@ -18,9 +18,11 @@ public static class AgentIdMapping
         { "npc_lyra", 9 },
         { "npc_maya", 10 },
         { "npc_valac", 11 }
-    };
+    }, StringComparer.OrdinalIgnoreCase);
 
-    private static readonly Dictionary<uint, string> NumericToStringMap = new();
+    private static readonly ConcurrentDictionary<uint, string> NumericToStringMap = new();
+    private static uint _nextId = 100;
+    private static readonly object _lock = new();
 
     static AgentIdMapping()
     {
@@ -37,7 +39,25 @@ public static class AgentIdMapping
         {
             return id;
         }
-        return 0;
+
+        lock (_lock)
+        {
+            if (StringToNumericMap.TryGetValue(stringId, out id))
+            {
+                return id;
+            }
+
+            while (NumericToStringMap.ContainsKey(_nextId))
+            {
+                _nextId++;
+            }
+
+            id = _nextId++;
+            StringToNumericMap[stringId] = id;
+            NumericToStringMap[id] = stringId;
+            Console.WriteLine($"[AgentIdMapping] Auto-registered dynamic NPC: '{stringId}' -> {id}");
+            return id;
+        }
     }
 
     public static string GetStringId(uint numericId)

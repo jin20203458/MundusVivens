@@ -29,23 +29,26 @@ public interface IDialogueOrchestrator
 public class DialogueOrchestrator : IDialogueOrchestrator
 {
     private readonly IGeminiApiService _apiService;
-    private readonly IGossipEngine _gossipEngine;
+    private readonly IBeliefEngine _beliefEngine;
     private readonly MemoryEventLogger _memoryLogger;
     private readonly IWorldEventBroadcaster _broadcaster;
     private readonly IEmbeddingCache _embeddingCache;
+    private readonly IWorldContextService _worldContext;
 
     public DialogueOrchestrator(
         IGeminiApiService apiService,
-        IGossipEngine gossipEngine,
+        IBeliefEngine beliefEngine,
         MemoryEventLogger memoryLogger,
         IWorldEventBroadcaster broadcaster,
-        IEmbeddingCache embeddingCache)
+        IEmbeddingCache embeddingCache,
+        IWorldContextService worldContext)
     {
         _apiService = apiService;
-        _gossipEngine = gossipEngine;
+        _beliefEngine = beliefEngine;
         _memoryLogger = memoryLogger;
         _broadcaster = broadcaster;
         _embeddingCache = embeddingCache;
+        _worldContext = worldContext;
     }
 
     public async Task<DialogueResult> RunConversationAsync(AgentInstance agentA, AgentInstance agentB, ulong taskId = 0, CancellationToken cancellationToken = default)
@@ -55,7 +58,7 @@ public class DialogueOrchestrator : IDialogueOrchestrator
 
     private readonly Random _random = new();
 
-    private int ComputeDistortionLevel(AgentInstance speaker, AgentInstance listener, GossipItem gossip)
+    private int ComputeDistortionLevel(AgentInstance speaker, AgentInstance listener, Belief belief)
     {
         double distortionScore = 0.0;
         
@@ -63,11 +66,11 @@ public class DialogueOrchestrator : IDialogueOrchestrator
         distortionScore += (speaker.Persona.Extroversion - 0.5) * 0.6;
         
         // 2. 소문 대상에 대한 적대감이 높으면 악의적 왜곡 (0.0 ~ 0.4)
-        if (speaker.RelationshipMap.TryGetValue(gossip.Subject, out var subjectRel))
+        if (speaker.RelationshipMap.TryGetValue(belief.SubjectId, out var subjectRel))
             distortionScore += Math.Max(0, -subjectRel.Liking / 250.0);
         
         // 3. 이미 많이 왜곡된 소문은 추가 왜곡 확률 증가 (0.0 ~ 0.2)
-        distortionScore += Math.Min(gossip.MutationCount * 0.05, 0.2);
+        distortionScore += Math.Min(belief.MutationCount * 0.05, 0.2);
         
         // 4. 듣는 이와의 신뢰가 낮으면 정보를 축소 (0.0 ~ 0.1)
         if (speaker.RelationshipMap.TryGetValue(listener.AgentId, out var listenerRel))
@@ -85,36 +88,36 @@ public class DialogueOrchestrator : IDialogueOrchestrator
         Console.WriteLine($"📍 위치: {participants[0].Status.CurrentLocation}");
         Console.WriteLine($"=======================================================\n");
 
-        // 1. Decay gossips for all participants
+        // 1. Decay beliefs for all participants
         foreach (var p in participants)
         {
-            _gossipEngine.DecayAgentGossips(p, _gossipEngine.CurrentTick);
+            _beliefEngine.DecayBeliefs(p, _beliefEngine.CurrentTick);
         }
 
-        // 2. Select gossip to share targeting other participants
-        var gossipToShareMap = new Dictionary<string, (KnownGossip Gossip, AgentInstance TargetListener)>();
+        // 2. Select belief to share targeting other participants
+        var beliefToShareMap = new Dictionary<string, (Belief Belief, AgentInstance TargetListener)>();
         foreach (var participant in participants)
         {
             var otherParticipants = participants.Where(p => p.AgentId != participant.AgentId).ToList();
             if (otherParticipants.Count == 0) continue;
             var targetListener = otherParticipants[_random.Next(otherParticipants.Count)];
             
-            var topK = ComputeTopKGossips(participant, targetListener);
-            var selectedGossip = _gossipEngine.SelectGossipToShare(participant, targetListener, topK);
-            if (selectedGossip != null)
+            var topK = ComputeTopKBeliefs(participant, targetListener);
+            var selectedBelief = _beliefEngine.SelectBeliefToShare(participant, targetListener, topK);
+            if (selectedBelief != null)
             {
-                gossipToShareMap[participant.AgentId] = (selectedGossip, targetListener);
+                beliefToShareMap[participant.AgentId] = (selectedBelief, targetListener);
             }
         }
 
-        var gossipInstructions = new List<string>();
-        foreach (var item in gossipToShareMap)
+        var beliefInstructions = new List<string>();
+        foreach (var item in beliefToShareMap)
         {
             var speakerId = item.Key;
-            var (gossip, targetListener) = item.Value;
+            var (belief, targetListener) = item.Value;
             var speaker = participants.First(p => p.AgentId == speakerId);
             
-            int distortionLevel = ComputeDistortionLevel(speaker, targetListener, gossip.Gossip);
+            int distortionLevel = ComputeDistortionLevel(speaker, targetListener, belief);
             
             string levelDesc = distortionLevel switch
             {
@@ -123,13 +126,13 @@ public class DialogueOrchestrator : IDialogueOrchestrator
                 _ => "정확 전달 (알고 있는 소문 내용을 있는 그대로 최대한 정확하게 사실적으로 전달하십시오.)"
             };
             
-            gossipInstructions.Add($"- 화자: {speaker.Persona.Name}, 전달 대상: {targetListener.Persona.Name}\n" +
-                                   $"  소물 대상: {gossip.Gossip.Subject}, 소문 내용: \"{gossip.Gossip.Content}\"\n" +
+            beliefInstructions.Add($"- 화자: {speaker.Persona.Name}, 전달 대상: {targetListener.Persona.Name}\n" +
+                                   $"  소문 대상: {belief.SubjectId}, 소문 내용: \"{belief.Content}\"\n" +
                                    $"  왜곡 가이드라인 [레벨 {distortionLevel}]: {levelDesc}\n" +
                                    $"  지시: 대화 중 기회가 된다면 상대방 실명을 언급하며 이 가이드라인에 맞추어 소문을 자연스럽게 흘리거나 폭로하십시오.");
         }
-        string gossipInstructionsStr = gossipInstructions.Any() 
-            ? string.Join("\n\n", gossipInstructions) 
+        string gossipInstructionsStr = beliefInstructions.Any() 
+            ? string.Join("\n\n", beliefInstructions) 
             : "이번 대화에서 공유할 새로운 소문 지시가 없습니다. 평범한 대화를 진행하십시오.";
 
         // 3. Build participant profiles
@@ -143,18 +146,43 @@ public class DialogueOrchestrator : IDialogueOrchestrator
                 relsStr.Add($"{other.Persona.Name}에 대한 태도(호감도: {rel.Liking}/100, 신뢰도: {rel.Trust}/100)");
             }
             
-            var relevantEpisodes = p.MemoryBox.EpisodicMemories
-                .Where(e => e.InvolvedAgentIds != null && e.InvolvedAgentIds.Intersect(participants.Select(part => part.AgentId)).Any())
-                .Select(e => $"[{e.Timestamp:HH:mm}] {e.Summary}");
-            
-            string relevantMemoriesStr = string.Join("\n", relevantEpisodes);
-            if (p.MemoryBox.CoreMemories.Any())
+            // 통합 믿음 리스트 중 중요도 순 Top-10 가공
+            var sortedBeliefs = p.MemoryBox.Beliefs.Values
+                .OrderByDescending(b => b.Importance)
+                .Take(10)
+                .ToList();
+
+            var beliefLines = new List<string>();
+            foreach (var b in sortedBeliefs)
             {
-                relevantMemoriesStr += "\n[장기 기억]\n" + string.Join("\n", p.MemoryBox.CoreMemories.Select(c => $"- {c.Content}"));
+                double daysPassed = (DateTime.UtcNow - b.AcquiredAt).TotalDays;
+                string timeTag = daysPassed switch
+                {
+                    < 0.04 => "[방금 전]",
+                    < 1.0 => "[오늘]",
+                    < 2.0 => "[어제]",
+                    < 7.0 => $"[{(int)daysPassed}일 전]",
+                    < 30.0 => $"[{(int)(daysPassed / 7.0)}주 전]",
+                    < 365.0 => $"[{(int)(daysPassed / 30.0)}달 전]",
+                    _ => $"[{(int)(daysPassed / 365.0)}년 전]"
+                };
+
+                string beliefTypeDesc = b.Type switch
+                {
+                    BeliefType.Core => "확고한 신념/정체성",
+                    BeliefType.Witnessed => "직접 본 사건",
+                    BeliefType.Heard => "전해 들은 이야기",
+                    BeliefType.Overheard => "얼핏 엿들은 이야기",
+                    _ => "기억"
+                };
+
+                beliefLines.Add($"- {timeTag} {beliefTypeDesc} (주관적 확신도: {(int)(b.Confidence * 100)}%): \"{b.Content}\" (대상: {b.SubjectId})");
             }
+            
+            string relevantMemoriesStr = string.Join("\n", beliefLines);
             if (string.IsNullOrWhiteSpace(relevantMemoriesStr))
             {
-                relevantMemoriesStr = "특별한 과거 기억이 없습니다.";
+                relevantMemoriesStr = "특별히 기억하고 있거나 믿고 있는 사실이 없습니다.";
             }
 
             participantDetails.Add($@"### 에이전트 [{p.Persona.Name}] (ID: {p.AgentId})
@@ -167,13 +195,21 @@ public class DialogueOrchestrator : IDialogueOrchestrator
 - 대화 전 계획했던 행동: {(p.Status.HasActiveJob ? p.Status.ActiveJobIntent : "없음")} (목표 장소: {(p.Status.HasActiveJob ? p.Status.ActiveJobLocation : "없음")})
 - 타 참가자들과의 관계:
   {string.Join("\n  ", relsStr)}
-- 관련 기억 맥락:
+- 관련 기억 및 신념 맥락 (가장 중요하게 인지하는 순):
 {relevantMemoriesStr}");
         }
 
+        var worldCtx = _worldContext.GetContext();
+
         string systemPrompt = $$"""
 <role>월드 오케스트레이터</role>
-<task>참여자 정보와 소문 폭로 지시를 바탕으로 다자간 대화 대본을 작성하고, 그 대화의 결과로 생겨난 관계 변화, 감정 변화, 유통된 소문 정보, 그리고 대화 직후 참여자들의 다음 행동 계획(next_jobs)을 일괄 생성하십시오.</task>
+<task>현재 시대 및 시대적 배경 정보, 그리고 참여자 정보와 소문 폭로 지시를 바탕으로 다자간 대화 대본을 작성하고, 그 대화의 결과로 생겨난 관계 변화, 감정 변화, 유통된 소문 정보, 그리고 대화 직후 참여자들의 다음 행동 계획(next_jobs)을 일괄 생성하십시오.</task>
+
+<world_context>
+[현재 시대 배경 및 발생 중인 대규모 거시 사건]
+- 현재 시대: {{worldCtx.CurrentEra}}
+- 진행 중인 전역 상태: {{worldCtx.ActiveGlobalEvents}}
+</world_context>
 
 <participants>
 [참여자 목록 및 정보]
@@ -181,7 +217,7 @@ public class DialogueOrchestrator : IDialogueOrchestrator
 </participants>
 
 <gossip_instructions>
-[소문 폭로 지시 및 왜곡 가이드라인]
+[소문(정보) 폭로 지시 및 왜곡 가이드라인]
 {{gossipInstructionsStr}}
 </gossip_instructions>
 
@@ -198,14 +234,15 @@ public class DialogueOrchestrator : IDialogueOrchestrator
    - 대화 내용을 바탕으로 각 화자 간에 발생한 호감도(liking)와 신뢰도(trust) 변화량을 -10에서 +10 사이 정수값(delta)으로 산출하십시오.
    - from과 to에 해당하는 AgentId를 명시하십시오. (예: from: "npc_eva", to: "npc_bart")
 4. emotion_updates (대화 후 감정 변화):
-   - 대화 내용을 반영하여 대화 종료 시점의 최종 감정 단어 하나(예: '평온함', '유쾌함', '분노', '의심' 등)를 기록하십시오.
-5. gossips_exchanged (유통된 소문 분석):
-   - 대화 중 소문이 실제로 폭로되거나 전파되었는지 분석하여 기록하십시오.
-   - gossip_id: 주어진 [소문 폭로 지시]에 매칭되는 소문일 경우 해당 ID를 정확히 쓰십시오.
-   - subject: 소문의 대상 AgentId
-   - content: 실제로 대화에서 흘려진 소문 텍스트 (왜곡 가이드라인에 의해 왜곡/변형된 형태 그대로 추출되어야 함)
+   - 대화 내용을 반영하여 대화 종료 시점의 최종 감정 단어 하나(예: '평온함', '유쾌함', '분노', '의심' 등)를 new_emotion에 기록하십시오.
+   - 그 감정의 강도(intensity)를 대화 맥락과 심각성에 따라 LOW, MEDIUM, HIGH 중 하나로 결정하여 기록하십시오. (예: 가벼운 실랑이는 LOW, 깊은 갈등이나 놀라운 사실 폭로는 HIGH)
+5. beliefs_shared (대화 중 새로 주고받은 정보 분석):
+   - 대화 중 개인적인 소문이나 정보가 실제로 폭로되거나 전파 되었는지 분석하여 기록하십시오.
+   - belief_id: 주어진 [소문(정보) 폭로 지시]에 매칭되는 정보일 경우 해당 ID를 정확히 쓰십시오.
+   - subject: 정보의 대상이 된 인물의 AgentId
+   - content: 실제로 대화에서 흘려진 정보 텍스트 (왜곡 가이드라인에 의해 왜곡/변형된 형태 그대로 추출되어야 함)
    - credibility_rating: 들려온 이야기에 대해 화자가 보인 신빙성 정도 (0 ~ 100)
-   - speaker_id: 소문을 말한 화자의 AgentId
+   - speaker_id: 정보를 발설한 화자의 AgentId
 6. next_jobs (대화 후 다음 행동 계획):
    - 대화 종료 후 각 참여자가 이동할 다음 장소(target_location)와 수행할 구체적인 행동(activity)을 결정하십시오.
    - 대화 내용에서 동행하거나 새로운 행동을 같이 하기로 약속하지 않았다면, 무리하게 이동할 필요 없이 각자 [대화 전 계획했던 행동]의 목표 장소와 행동을 그대로 다시 수행하도록 결정해야 합니다. (원래의 계획이 '없음'이었다면 현재 위치에서 대기하거나 일상 활동을 계속하도록 하십시오.)
@@ -237,16 +274,15 @@ public class DialogueOrchestrator : IDialogueOrchestrator
     { "from": "npc_bart", "to": "npc_eva", "liking_delta": 0, "trust_delta": 0 }
   ],
   "emotion_updates": [
-    { "agent_id": "npc_eva", "new_emotion": "의심" },
-    { "agent_id": "npc_bart", "new_emotion": "평온함" }
+    { "agent_id": "npc_eva", "new_emotion": "의심", "intensity": "HIGH" },
+    { "agent_id": "npc_bart", "new_emotion": "평온함", "intensity": "LOW" }
   ],
-  "gossips_exchanged": [
-    { "gossip_id": "gossip_...", "subject": "npc_kyle", "content": "왜곡되어 말해진 소문 내용", "credibility_rating": 80, "speaker_id": "npc_eva" }
+  "beliefs_shared": [
+    { "belief_id": "belief_...", "subject": "npc_kyle", "content": "왜곡되어 말해진 정보 내용", "credibility_rating": 80, "speaker_id": "npc_eva" }
   ],
   "next_jobs": [
     { "agent_id": "npc_eva", "target_location": "술집 (Tavern)", "activity": "Bart와 술집에서 술을 마시며 이야기를 나눈다" },
     { "agent_id": "npc_bart", "target_location": "술집 (Tavern)", "activity": "Eva와 술집에서 술을 마시며 이야기를 나눈다" }
-  ]
 }
 </output_format>
 """;
@@ -325,22 +361,29 @@ public class DialogueOrchestrator : IDialogueOrchestrator
                 emotionUpdatesList.Add(new AgentEmotionUpdate
                 {
                     AgentId = agent.NumericId,
-                    NewEmotion = emUpdate.NewEmotion
+                    NewEmotion = emUpdate.NewEmotion,
+                    Intensity = ParseIntensity(emUpdate.Intensity)
                 });
             }
         }
 
-        // Save episodes
-        var timestamp = DateTime.Now;
+        // Save conversation as a Witnessed Belief
+        var timestamp = DateTime.UtcNow;
         foreach (var agent in participants)
         {
-            agent.MemoryBox.AddEpisode(new Episode
+            var otherNames = string.Join(", ", participants.Where(p => p.AgentId != agent.AgentId).Select(p => p.Persona.Name));
+            var dialogueBelief = new Belief
             {
-                Timestamp = timestamp,
-                TargetName = string.Join(", ", participants.Where(p => p.AgentId != agent.AgentId).Select(p => p.Persona.Name)),
-                Summary = analysis.Summary,
-                InvolvedAgentIds = participants.Select(p => p.AgentId).ToList()
-            });
+                BeliefId = $"belief_dialogue_{Guid.NewGuid().ToString().Substring(0, 5)}",
+                SubjectId = agent.AgentId,
+                Content = $"{otherNames}와 대화함: {analysis.Summary}",
+                Type = BeliefType.Witnessed,
+                Confidence = 1.0,
+                Salience = 1.0,
+                EmotionalCharge = 0.5,
+                AcquiredAt = timestamp
+            };
+            agent.MemoryBox.AddOrUpdateBelief(dialogueBelief);
         }
 
         // Apply relationship changes
@@ -348,8 +391,8 @@ public class DialogueOrchestrator : IDialogueOrchestrator
         {
             foreach (var rc in analysis.RelationshipChanges)
             {
-                var fromAgent = participants.FirstOrDefault(p => p.AgentId == rc.From);
-                var toAgent = participants.FirstOrDefault(p => p.AgentId == rc.To);
+                var fromAgent = participants.FirstOrDefault(p => p.AgentId.Equals(rc.From, StringComparison.OrdinalIgnoreCase));
+                var toAgent = participants.FirstOrDefault(p => p.AgentId.Equals(rc.To, StringComparison.OrdinalIgnoreCase));
                 if (fromAgent == null || toAgent == null) continue;
 
                 var rel = GetOrCreateRelationship(fromAgent, toAgent.AgentId);
@@ -377,14 +420,14 @@ public class DialogueOrchestrator : IDialogueOrchestrator
             }
         }
 
-        // Apply gossip sharing
-        if (analysis.GossipsExchanged != null)
+        // Apply belief sharing
+        if (analysis.BeliefsShared != null)
         {
-            foreach (var gossipElem in analysis.GossipsExchanged)
+            foreach (var beliefElem in analysis.BeliefsShared)
             {
-                string subject = gossipElem.Subject;
-                string content = gossipElem.Content;
-                string speakerId = gossipElem.SpeakerId;
+                string subject = beliefElem.Subject;
+                string content = beliefElem.Content;
+                string speakerId = beliefElem.SpeakerId;
 
                 if (string.IsNullOrWhiteSpace(subject) || string.IsNullOrWhiteSpace(content)) continue;
 
@@ -395,101 +438,89 @@ public class DialogueOrchestrator : IDialogueOrchestrator
 
                 foreach (var listener in listeners)
                 {
-                    // Find original gossip
-                    GossipItem? originalGossip = null;
-                    if (!string.IsNullOrWhiteSpace(gossipElem.GossipId))
+                    // Find original belief
+                    Belief? originalBelief = null;
+                    if (!string.IsNullOrWhiteSpace(beliefElem.BeliefId))
                     {
-                        if (speaker.KnownGossips.TryGetValue(gossipElem.GossipId, out var knownGossip))
+                        if (speaker.MemoryBox.Beliefs.TryGetValue(beliefElem.BeliefId, out var kb))
                         {
-                            originalGossip = knownGossip.Gossip;
+                            originalBelief = kb;
                         }
                     }
 
-                    if (originalGossip == null)
+                    if (originalBelief == null)
                     {
-                        if (gossipToShareMap.TryGetValue(speakerId, out var tuple) && tuple.Gossip.Gossip.Subject == subject)
+                        if (beliefToShareMap.TryGetValue(speakerId, out var tuple) && tuple.Belief.SubjectId == subject)
                         {
-                            originalGossip = tuple.Gossip.Gossip;
+                            originalBelief = tuple.Belief;
                         }
                     }
 
-                    if (originalGossip == null)
+                    if (originalBelief == null)
                     {
-                        var candidates = speaker.KnownGossips.Values.Where(kg => kg.Gossip.Subject == subject).ToList();
+                        var candidates = speaker.MemoryBox.Beliefs.Values.Where(b => b.SubjectId == subject && b.Type != BeliefType.Core).ToList();
                         double maxSim = 0;
-                        GossipItem? bestMatch = null;
+                        Belief? bestMatch = null;
                         var contentEmbedding = await _embeddingCache.GetOrComputeEmbeddingAsync(content, async t => await _apiService.GetEmbeddingAsync(t));
                         foreach (var cand in candidates)
                         {
-                            if (cand.Gossip.ContentEmbedding == null)
+                            if (cand.ContentEmbedding == null)
                             {
-                                cand.Gossip.ContentEmbedding = await _embeddingCache.GetOrComputeEmbeddingAsync(cand.Gossip.Content, async t => await _apiService.GetEmbeddingAsync(t));
+                                cand.ContentEmbedding = await _embeddingCache.GetOrComputeEmbeddingAsync(cand.Content, async t => await _apiService.GetEmbeddingAsync(t));
                             }
-                            double sim = EmbeddingCache.CosineSimilarity(contentEmbedding, cand.Gossip.ContentEmbedding);
+                            double sim = EmbeddingCache.CosineSimilarity(contentEmbedding, cand.ContentEmbedding);
                             if (sim > maxSim)
                             {
                                 maxSim = sim;
-                                bestMatch = cand.Gossip;
+                                bestMatch = cand;
                             }
                         }
 
                         if (maxSim >= 0.82 && bestMatch != null)
                         {
-                            originalGossip = bestMatch;
+                            originalBelief = bestMatch;
                         }
                     }
 
-                    if (originalGossip == null)
+                    if (originalBelief == null)
                     {
-                        originalGossip = new GossipItem
+                        originalBelief = new Belief
                         {
-                            GossipId = $"gossip_{subject}_{Guid.NewGuid().ToString().Substring(0, 5)}",
-                            Subject = subject,
+                            BeliefId = $"belief_{subject}_{Guid.NewGuid().ToString().Substring(0, 5)}",
+                            SubjectId = subject,
                             Content = content,
+                            Type = BeliefType.Heard,
+                            Confidence = 0.7,
+                            Salience = 1.0,
+                            EmotionalCharge = 0.5,
                             SourceAgentId = speakerId,
-                            BaseCredibility = 70
+                            AcquiredAt = DateTime.UtcNow
                         };
                         
-                        speaker.KnownGossips[originalGossip.GossipId] = new KnownGossip
-                        {
-                            Gossip = originalGossip,
-                            SubjectiveBelief = 1.0,
-                            HasSharedWithOthers = true,
-                            LastDecayedAtTick = _gossipEngine.CurrentTick
-                        };
+                        speaker.MemoryBox.AddOrUpdateBelief(originalBelief);
                     }
 
-                    await _gossipEngine.ProcessGossipSharingAsync(speaker, listener, originalGossip, content);
+                    await _beliefEngine.ProcessBeliefSharingAsync(speaker, listener, originalBelief, content);
 
-                    // Broadcast gossip sharing event
-                    bool isMutated = !originalGossip.Content.Trim().Equals(content.Trim(), StringComparison.OrdinalIgnoreCase);
-                    var gossipEvent = new WorldEvent
+                    // Broadcast belief sharing event
+                    bool isMutated = !originalBelief.Content.Trim().Equals(content.Trim(), StringComparison.OrdinalIgnoreCase);
+                    var beliefEvent = new WorldEvent
                     {
                         Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
-                        Gossip = new GossipEvent
+                        BeliefShare = new BeliefShareEvent
                         {
                             SpeakerId = speaker.NumericId,
                             ListenerId = listener.NumericId,
-                            SubjectId = AgentIdMapping.GetNumericId(originalGossip.Subject),
-                            GossipContent = content,
+                            SubjectId = AgentIdMapping.GetNumericId(originalBelief.SubjectId),
+                            Content = content,
                             IsMutated = isMutated
                         }
                     };
-                    await _broadcaster.BroadcastAsync(gossipEvent);
+                    await _broadcaster.BroadcastAsync(beliefEvent);
 
-                    // 소문 전파를 중기 에피소드 기억으로 귀속
-                    string subjectName = (subject == speaker.AgentId) ? speaker.Persona.Name : subject;
-                    listener.MemoryBox.AddEpisode(new Episode
-                    {
-                        Timestamp = DateTime.Now,
-                        TargetName = speaker.Persona.Name,
-                        Summary = $"{speaker.Persona.Name}(으)로부터 {subjectName}에 대한 소문(\"{content}\")을 들었습니다.",
-                        InvolvedAgentIds = new List<string> { speaker.AgentId, listener.AgentId, subject }
-                    });
-
-                    // 소문 유통 메모리 로깅
-                    string gossipLog = $"소문 전파 ({speaker.Persona.Name} ➔ {listener.Persona.Name}): 대상={originalGossip.Subject}, 내용=\"{content}\"";
-                    await _memoryLogger.LogMemoryEventAsync(gossipLog);
+                    // 기록용 에이전트 로그 남기기
+                    string beliefLog = $"믿음/소문 유통 ({speaker.Persona.Name} ➔ {listener.Persona.Name}): 대상={originalBelief.SubjectId}, 내용=\"{content}\"";
+                    await _memoryLogger.LogMemoryEventAsync(beliefLog);
                 }
             }
         }
@@ -499,7 +530,7 @@ public class DialogueOrchestrator : IDialogueOrchestrator
         {
             foreach (var nj in analysis.NextJobs)
             {
-                var agent = participants.FirstOrDefault(p => p.AgentId == nj.AgentId);
+                var agent = participants.FirstOrDefault(p => p.AgentId.Equals(nj.AgentId, StringComparison.OrdinalIgnoreCase));
                 if (agent == null) continue;
 
                 ulong newJobId = MundusVivensGrpcService.GenerateNextJobId();
@@ -532,16 +563,7 @@ public class DialogueOrchestrator : IDialogueOrchestrator
 
     private string MapToValidLocation(string rawLocation)
     {
-        if (string.IsNullOrWhiteSpace(rawLocation)) return "마을 광장 (Square)";
-        var lower = rawLocation.ToLower();
-        if (lower.Contains("저택") || lower.Contains("manor")) return "영주 저택 (Manor)";
-        if (lower.Contains("성당") || lower.Contains("church")) return "성당 (Church)";
-        if (lower.Contains("초소") || lower.Contains("경비") || lower.Contains("guard")) return "경비 초소 (Guard Post)";
-        if (lower.Contains("연금") || lower.Contains("공방") || lower.Contains("alchemy") || lower.Contains("lab")) return "연금술 공방 (Alchemy Lab)";
-        if (lower.Contains("대장간") || lower.Contains("forge")) return "대장간 (Forge)";
-        if (lower.Contains("골목") || lower.Contains("alley")) return "뒷골목 (Back Alley)";
-        if (lower.Contains("술집") || lower.Contains("tavern")) return "술집 (Tavern)";
-        return "마을 광장 (Square)";
+        return LocationCoordinateRegistry.ParseLocation(rawLocation);
     }
 
 
@@ -556,41 +578,37 @@ public class DialogueOrchestrator : IDialogueOrchestrator
     }
 
     /// <summary>
-    /// 관계 감정, 와전 자극도, 미전파 우선순위를 반영한 Top-K 소문 기억 선별 헬퍼.
+    /// 관계 감정, 와전 자극도, 미전파 우선순위를 반영한 Top-K 믿음(기억) 선별 헬퍼.
     /// </summary>
-    private List<KnownGossip> ComputeTopKGossips(AgentInstance speaker, AgentInstance listener, int k = 3)
+    private List<Belief> ComputeTopKBeliefs(AgentInstance speaker, AgentInstance listener, int k = 10)
     {
-        _gossipEngine.DecayAgentGossips(speaker, _gossipEngine.CurrentTick);
-        _gossipEngine.DecayAgentGossips(listener, _gossipEngine.CurrentTick);
+        _beliefEngine.DecayBeliefs(speaker, _beliefEngine.CurrentTick);
+        _beliefEngine.DecayBeliefs(listener, _beliefEngine.CurrentTick);
 
-        return speaker.KnownGossips.Values
-            .Select(kg => {
-                double score = kg.SubjectiveBelief; // 기본 확신도 (0.0 ~ 1.0)
+        return speaker.MemoryBox.Beliefs.Values
+            .Select(b => {
+                double score = b.Importance; // 기본 중요도 식 (Confidence * 0.4 + Salience * 0.35 + EmotionalCharge * 0.25)
 
-                // 당사자 인식 가중치: 대화 상대에 대한 소문을 살짝 의식 (+0.15)
-                if (kg.Gossip.Subject == listener.AgentId)
+                // 당사자 관련 가중치 추가
+                if (b.SubjectId == listener.AgentId)
                     score += 0.15;
 
-                // 미전파 소문 가중치: 아직 남에게 말하지 않은 따끈한 소문 우선 (+0.25)
-                if (!kg.HasSharedWithOthers)
+                // 아직 발설하지 않은 신념 가중치 추가
+                if (!b.SharedWith.Contains(listener.AgentId))
                     score += 0.25;
 
-                // 감정 연동 가중치: 소문 대상에 대한 감정이 강할수록 기억에 잘 남음 (max +0.4)
-                if (speaker.RelationshipMap.TryGetValue(kg.Gossip.Subject, out var subjectRel))
+                // 감정 및 관계에 의한 가중치 추가
+                if (speaker.RelationshipMap.TryGetValue(b.SubjectId, out var subjectRel))
                     score += Math.Min(Math.Abs(subjectRel.Liking) / 250.0, 0.4);
 
-                // 와전 자극도 가중치: 여러 입을 거친 자극적 소문이 더 기억에 남음 (max +0.25)
-                score += Math.Min(kg.Gossip.MutationCount * 0.08, 0.25);
+                // 와전 자극 가중치
+                score += Math.Min(b.MutationCount * 0.08, 0.25);
 
-                // 시간 신선도 가중치: 최근에 들은 소문이 더 잘 떠오름 (max +0.2)
-                double secondsSinceAcquired = (DateTime.UtcNow - kg.AcquiredAt).TotalSeconds;
-                score += Math.Max(0.0, (1.0 - secondsSinceAcquired / 1000.0) * 0.2);
-
-                return new { Gossip = kg, Score = score };
+                return new { Belief = b, Score = score };
             })
             .OrderByDescending(x => x.Score)
             .Take(k)
-            .Select(x => x.Gossip)
+            .Select(x => x.Belief)
             .ToList();
     }
 
@@ -598,5 +616,19 @@ public class DialogueOrchestrator : IDialogueOrchestrator
     {
         if (string.IsNullOrWhiteSpace(response)) return string.Empty;
         return response.Trim().Replace("\"", "");
+    }
+
+    private static EmotionIntensity ParseIntensity(string intensityStr)
+    {
+        if (string.IsNullOrWhiteSpace(intensityStr))
+            return EmotionIntensity.Medium;
+
+        return intensityStr.ToUpper().Trim() switch
+        {
+            "LOW" => EmotionIntensity.Low,
+            "HIGH" => EmotionIntensity.High,
+            "MEDIUM" => EmotionIntensity.Medium,
+            _ => EmotionIntensity.Medium
+        };
     }
 }

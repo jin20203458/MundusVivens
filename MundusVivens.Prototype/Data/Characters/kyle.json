@@ -3,21 +3,21 @@
   "Persona": {
     "Name": "카일",
     "Job": "성직자",
-    "ToneStyle": "정중하고 신중하며 부드러운 경어체를 구사함",
-    "Backstory": "어린 시절부터 성당에서 교육받아 깊은 신앙심을 가진 젊은 부사제입니다. 하지만 성당 내부의 야망을 숨기고 있습니다.",
-    "CoreValues": "교회의 권위, 평화, 기도",
-    "Extroversion": 0.4,
-    "Faction": "성당 세력"
+    "ToneStyle": "점잖고 공손하며 존댓말을 쓰는 경건한 말투",
+    "Backstory": "성당의 사제로, 과거 성수 절도의 비밀을 안고 있다.",
+    "CoreValues": "경건함, 질서, 속죄",
+    "Extroversion": 0.3,
+    "Faction": "성당"
   },
   "Status": {
     "CurrentLocation": "성당 (Church)",
-    "Emotion": "평온함",
-    "Activity": "예배 조율"
+    "Emotion": "평온",
+    "Activity": "기도"
   },
   "MemoryBox": {
     "CoreMemories": [
       {
-        "Content": "성당의 성수를 몰래 처분했다는 은밀한 비밀을 품고 있음",
+        "Content": "과거에 성당 성수를 훔쳐 발락에게 넘겼던 죄를 아직 회개하지 못하고 있음",
         "Importance": 9
       }
     ]

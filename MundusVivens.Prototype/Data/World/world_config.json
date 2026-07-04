@@ -1,0 +1,141 @@
+{
+  "Locations": [
+    {
+      "SemanticName": "성당 (Church)",
+      "Aliases": ["성당", "church"],
+      "Coordinates": { "X": 20.0, "Y": 0.0, "Z": 80.0 }
+    },
+    {
+      "SemanticName": "광장 (Square)",
+      "Aliases": ["광장", "마을 광장", "square"],
+      "Coordinates": { "X": 50.0, "Y": 0.0, "Z": 50.0 }
+    },
+    {
+      "SemanticName": "뒷골목 (Back Alley)",
+      "Aliases": ["뒷골목", "골목", "back alley", "alley"],
+      "Coordinates": { "X": 15.0, "Y": 0.0, "Z": 50.0 }
+    },
+    {
+      "SemanticName": "술집 (Tavern)",
+      "Aliases": ["술집", "주점", "tavern"],
+      "Coordinates": { "X": 30.0, "Y": 0.0, "Z": 40.0 }
+    }
+  ],
+  "Agents": [
+    {
+      "AgentId": "npc_eva",
+      "Persona": {
+        "Name": "에바",
+        "Job": "술집 바텐더",
+        "ToneStyle": "쾌활하고 친근한 수다쟁이",
+        "Backstory": "마을 술집을 운영하는 사교적인 여성. 소문의 중심지.",
+        "CoreValues": "유쾌한 소통, 정보 수집",
+        "Extroversion": 0.9,
+        "Faction": "마을 주민"
+      },
+      "Status": {
+        "CurrentLocation": "술집 (Tavern)",
+        "Emotion": "평온",
+        "Activity": "맥주컵 닦기"
+      },
+      "MemoryBox": {
+        "CoreMemories": []
+      }
+    },
+    {
+      "AgentId": "npc_kyle",
+      "Persona": {
+        "Name": "카일",
+        "Job": "성직자",
+        "ToneStyle": "점잖고 공손하며 존댓말을 쓰는 경건한 말투",
+        "Backstory": "성당의 사제로, 과거 성수 절도의 비밀을 안고 있다.",
+        "CoreValues": "경건함, 질서, 속죄",
+        "Extroversion": 0.3,
+        "Faction": "성당"
+      },
+      "Status": {
+        "CurrentLocation": "성당 (Church)",
+        "Emotion": "평온",
+        "Activity": "기도"
+      },
+      "MemoryBox": {
+        "CoreMemories": [
+          {
+            "Content": "과거에 성당 성수를 훔쳐 발락에게 넘겼던 죄를 아직 회개하지 못하고 있음",
+            "Importance": 9
+          }
+        ]
+      }
+    },
+    {
+      "AgentId": "npc_valac",
+      "Persona": {
+        "Name": "발락",
+        "Job": "암시장 정보원",
+        "ToneStyle": "낮고 차가운 말투, 거래적 이익을 따짐",
+        "Backstory": "뒷골목 암시장의 정보원. 카일의 과거 범죄를 알고 있다.",
+        "CoreValues": "이익, 비밀 거래, 지배력",
+        "Extroversion": 0.4,
+        "Faction": "그림자 길드"
+      },
+      "Status": {
+        "CurrentLocation": "뒷골목 (Back Alley)",
+        "Emotion": "평온",
+        "Activity": "장부 검토"
+      },
+      "MemoryBox": {
+        "CoreMemories": [
+          {
+            "Content": "사제 카일이 과거에 성당 성수를 훔쳐 암시장에 팔았던 기록을 보유하고 있음",
+            "Importance": 9
+          }
+        ]
+      }
+    },
+    {
+      "AgentId": "player",
+      "Persona": {
+        "Name": "플레이어",
+        "Job": "여행자",
+        "ToneStyle": "자유로운 말투",
+        "Backstory": "가상 세계를 탐험하며 주민들의 비밀을 파헤치는 이방인입니다.",
+        "CoreValues": "호기심, 진실 규명",
+        "Extroversion": 0.5,
+        "Faction": "여행자"
+      },
+      "Status": {
+        "CurrentLocation": "광장 (Square)",
+        "Emotion": "평온",
+        "Activity": "마을 둘러보기"
+      },
+      "MemoryBox": {
+        "CoreMemories": []
+      }
+    }
+  ],
+  "Relationships": [
+    { "SourceAgentId": "npc_eva", "TargetAgentId": "npc_kyle", "Liking": 40, "Trust": 70 },
+    { "SourceAgentId": "npc_kyle", "TargetAgentId": "npc_eva", "Liking": 30, "Trust": 60 },
+    { "SourceAgentId": "npc_eva", "TargetAgentId": "npc_valac", "Liking": -10, "Trust": 30 },
+    { "SourceAgentId": "npc_valac", "TargetAgentId": "npc_eva", "Liking": 5, "Trust": 25 },
+    { "SourceAgentId": "npc_kyle", "TargetAgentId": "npc_valac", "Liking": -30, "Trust": 15 },
+    { "SourceAgentId": "npc_valac", "TargetAgentId": "npc_kyle", "Liking": 10, "Trust": 40 },
+    { "SourceAgentId": "npc_eva", "TargetAgentId": "player", "Liking": 15, "Trust": 50 },
+    { "SourceAgentId": "npc_kyle", "TargetAgentId": "player", "Liking": 0, "Trust": 50 },
+    { "SourceAgentId": "npc_valac", "TargetAgentId": "player", "Liking": -5, "Trust": 30 }
+  ],
+  "SeedGossips": [
+    {
+      "Gossip": {
+        "GossipId": "gossip_holy_water_theft",
+        "Subject": "npc_kyle",
+        "Content": "카일이 밤중에 성당 성수를 훔쳐 암시장에 넘겼다",
+        "SourceAgentId": "npc_valac",
+        "BaseCredibility": 90,
+        "MutationCount": 0
+      },
+      "HolderAgentId": "npc_eva",
+      "SubjectiveBelief": 0.80
+    }
+  ]
+}

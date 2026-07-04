@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace MundusVivens.Prototype.Models;
 
@@ -17,42 +18,50 @@ public class ChatMessage
     }
 }
 
-public class Episode
-{
-    public DateTime Timestamp { get; set; } = DateTime.Now;
-    public string TargetName { get; set; } = string.Empty;
-    public string Summary { get; set; } = string.Empty;
-    public List<string> InvolvedAgentIds { get; set; } = new();
-}
-
-public class CoreFact
-{
-    public string Content { get; set; } = string.Empty;
-    public int Importance { get; set; } = 5; // 1 ~ 10
-
-    public CoreFact() { }
-    public CoreFact(string content, int importance)
-    {
-        Content = content;
-        Importance = importance;
-    }
-}
-
 public class MemoryBox
 {
+    private readonly object _lock = new();
     public List<ChatMessage> ActiveConversation { get; set; } = new();
-    public ConcurrentQueue<Episode> EpisodicMemories { get; set; } = new();
-    public List<CoreFact> CoreMemories { get; set; } = new();
+    
+    // 통합 믿음 보관소 (BeliefId -> Belief)
+    public ConcurrentDictionary<string, Belief> Beliefs { get; set; } = new();
 
-    public const int MaxEpisodes = 20;
-    public const int MaxCoreMemories = 5;
+    public const int MaxTotalBeliefs = 40;
+    public const int MaxCoreBeliefs = 5;
 
-    public void AddEpisode(Episode episode)
+    public void AddOrUpdateBelief(Belief newBelief)
     {
-        EpisodicMemories.Enqueue(episode);
-        if (EpisodicMemories.Count > MaxEpisodes)
+        lock (_lock)
         {
-            EpisodicMemories.TryDequeue(out _);
+            // 1. 이미 존재하는 정보인지 ID로 확인
+            Beliefs.AddOrUpdate(newBelief.BeliefId, newBelief, (id, old) => {
+                return newBelief;
+            });
+
+            // 2. Core 타입의 한도 및 밀어내기(강등) 처리
+            var coreBeliefs = Beliefs.Values.Where(b => b.Type == BeliefType.Core).ToList();
+            if (coreBeliefs.Count > MaxCoreBeliefs)
+            {
+                var demotedCore = coreBeliefs.OrderBy(b => b.Importance).FirstOrDefault();
+                if (demotedCore != null)
+                {
+                    demotedCore.Type = BeliefType.Witnessed; // Core에서 Witnessed로 강등
+                    demotedCore.AcquiredAt = DateTime.UtcNow; // 일반 기억이 되었으므로 획득 시간 기준 재조정
+                }
+            }
+
+            // 3. 전체 메모리 예산 초과 시 도태(Eviction) 처리 (Core는 면역)
+            while (Beliefs.Count > MaxTotalBeliefs)
+            {
+                var evictableCandidates = Beliefs.Values.Where(b => b.Type != BeliefType.Core).ToList();
+                if (!evictableCandidates.Any()) break;
+
+                var targetToEvict = evictableCandidates.OrderBy(b => b.Importance).FirstOrDefault();
+                if (targetToEvict != null)
+                {
+                    Beliefs.TryRemove(targetToEvict.BeliefId, out _);
+                }
+            }
         }
     }
 }

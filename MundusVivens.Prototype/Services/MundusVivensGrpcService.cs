@@ -44,7 +44,7 @@ public class MundusVivensGrpcService : MundusVivensGrpc.MundusVivensGrpcBase
     private readonly IWorldEventBroadcaster _broadcaster;
     private readonly IPlayerDialogueManager _playerDialogueManager;
     private readonly IDailyPlanService _dailyPlanService; // 🆕 일일 스케줄 및 성찰 서비스 추가
-    private readonly IGossipEngine _gossipEngine; // 🆕 소문 엔진 추가
+    private readonly IBeliefEngine _beliefEngine;
     private readonly IGeminiApiService _apiService;
 
     public MundusVivensGrpcService(
@@ -53,7 +53,7 @@ public class MundusVivensGrpcService : MundusVivensGrpc.MundusVivensGrpcBase
         IWorldEventBroadcaster broadcaster,
         IPlayerDialogueManager playerDialogueManager,
         IDailyPlanService dailyPlanService,
-        IGossipEngine gossipEngine,
+        IBeliefEngine beliefEngine,
         IGeminiApiService apiService)
     {
         _scheduler = scheduler;
@@ -61,7 +61,7 @@ public class MundusVivensGrpcService : MundusVivensGrpc.MundusVivensGrpcBase
         _broadcaster = broadcaster;
         _playerDialogueManager = playerDialogueManager;
         _dailyPlanService = dailyPlanService;
-        _gossipEngine = gossipEngine;
+        _beliefEngine = beliefEngine;
         _apiService = apiService;
     }
 
@@ -162,20 +162,21 @@ public class MundusVivensGrpcService : MundusVivensGrpc.MundusVivensGrpcBase
             Activity = agent.Status.Activity
         };
 
-        var recentMemories = agent.MemoryBox.EpisodicMemories
-            .Select(e => $"[{e.Timestamp:yyyy-MM-dd HH:mm:ss}] {e.TargetName}: {e.Summary}");
+        var recentMemories = agent.MemoryBox.Beliefs.Values
+            .OrderByDescending(b => b.AcquiredAt)
+            .Select(b => $"[{b.AcquiredAt:yyyy-MM-dd HH:mm:ss}] {b.Type}: {b.Content}");
         response.Memories.AddRange(recentMemories);
 
         return Task.FromResult(response);
     }
 
-    public override Task<InjectGossipResponse> InjectGossip(InjectGossipRequest request, ServerCallContext context)
+    public override Task<InjectBeliefResponse> InjectBelief(InjectBeliefRequest request, ServerCallContext context)
     {
         var agents = _agentsAccessor();
         var targetAgentIdStr = AgentIdMapping.GetStringId(request.TargetAgentId);
         if (!agents.TryGetValue(targetAgentIdStr, out var targetAgent))
         {
-            return Task.FromResult(new InjectGossipResponse
+            return Task.FromResult(new InjectBeliefResponse
             {
                 Success = false,
                 Message = $"대상 에이전트 '{request.TargetAgentId}'를 찾을 수 없습니다."
@@ -183,27 +184,35 @@ public class MundusVivensGrpcService : MundusVivensGrpc.MundusVivensGrpcBase
         }
 
         var subjectIdStr = AgentIdMapping.GetStringId(request.SubjectId);
-        var gossip = new GossipItem
+
+        var beliefType = request.BeliefType switch
         {
-            GossipId = $"gossip_{subjectIdStr}_{Guid.NewGuid().ToString().Substring(0, 5)}",
-            Subject = subjectIdStr,
+            ProtoBeliefType.BeliefTypeCore => BeliefType.Core,
+            ProtoBeliefType.BeliefTypeWitnessed => BeliefType.Witnessed,
+            ProtoBeliefType.BeliefTypeHeard => BeliefType.Heard,
+            ProtoBeliefType.BeliefTypeOverheard => BeliefType.Overheard,
+            _ => BeliefType.Witnessed
+        };
+
+        var belief = new Belief
+        {
+            BeliefId = $"belief_{subjectIdStr}_{Guid.NewGuid().ToString().Substring(0, 5)}",
+            SubjectId = subjectIdStr,
             Content = request.Content,
+            Type = beliefType,
+            Confidence = 0.8,
+            Salience = 1.0,
+            EmotionalCharge = 0.5,
             SourceAgentId = "ExternalGrpc",
-            BaseCredibility = 80,
-            MutationCount = 0
+            AcquiredAt = DateTime.UtcNow
         };
 
-        targetAgent.KnownGossips[gossip.GossipId] = new KnownGossip
-        {
-            Gossip = gossip,
-            SubjectiveBelief = 0.8,
-            HasSharedWithOthers = false
-        };
+        targetAgent.MemoryBox.AddOrUpdateBelief(belief);
 
-        return Task.FromResult(new InjectGossipResponse
+        return Task.FromResult(new InjectBeliefResponse
         {
             Success = true,
-            Message = $"에이전트 '{targetAgent.Persona.Name}'에게 소문 주입 성공."
+            Message = $"에이전트 '{targetAgent.Persona.Name}'에게 믿음(소문) 주입 성공."
         });
     }
 
@@ -290,8 +299,8 @@ public class MundusVivensGrpcService : MundusVivensGrpc.MundusVivensGrpcBase
         // 플레이어 잉여 세션(타임아웃) 정리 (약 2분)
         _ = _playerDialogueManager.CleanupIdleSessionsAsync(TimeSpan.FromMinutes(2), context.CancellationToken);
 
-        // 🆕 소문 쇠퇴(Decay) 처리: 전역 루프를 제거하고 글로벌 틱 번호만 갱신 (Lazy Decay)
-        _gossipEngine.CurrentTick = request.TickNumber;
+        // 🆕 믿음 쇠퇴(Decay) 처리: 전역 루프를 제거하고 글로벌 틱 번호만 갱신 (Lazy Decay)
+        _beliefEngine.CurrentTick = request.TickNumber;
 
         // 🆕 23틱 (자정 직전) 검출 시 백그라운드로 성찰 및 스케줄링 태스크 실행
         if (request.TickNumber % 24 == 23)
@@ -410,15 +419,16 @@ public class MundusVivensGrpcService : MundusVivensGrpc.MundusVivensGrpcBase
             var agentState = new InitialAgentState
             {
                 AgentId = kv.Value.NumericId,
-                Name = kv.Value.Persona.Name,
+                Name = kv.Value.Persona.Name ?? string.Empty,
                 Location = new LocationInfo
                 {
-                    Name = initialLoc,
+                    Name = initialLoc ?? "Unknown",
                     Position = new Vector3 { X = initX, Y = initY, Z = initZ }
                 },
-                Emotion = kv.Value.Status.Emotion,
-                Activity = kv.Value.Status.Activity,
-                Extroversion = (float)kv.Value.Persona.Extroversion
+                Emotion = kv.Value.Status.Emotion ?? "평온",
+                Activity = kv.Value.Status.Activity ?? "대기",
+                Extroversion = (float)kv.Value.Persona.Extroversion,
+                StringId = kv.Value.AgentId ?? string.Empty
             };
 
             foreach (var relKv in kv.Value.RelationshipMap)
@@ -434,23 +444,8 @@ public class MundusVivensGrpcService : MundusVivensGrpc.MundusVivensGrpcBase
             response.Agents.Add(agentState);
         }
 
-        // 인메모리 에이전트의 현재 고유 위치들을 추출하여 반환
-        var locations = agents.Values.Select(a => a.Status.CurrentLocation)
-                                     .Where(l => !string.IsNullOrEmpty(l) && l != "Unknown")
-                                     .Distinct()
-                                     .ToList();
-
-        if (locations.Count == 0)
-        {
-            locations.Add("영주 저택 (Manor)");
-            locations.Add("성당 (Church)");
-            locations.Add("경비 초소 (Guard Post)");
-            locations.Add("연금술 공방 (Alchemy Lab)");
-            locations.Add("마을 광장 (Square)");
-            locations.Add("대장간 (Forge)");
-            locations.Add("뒷골목 (Back Alley)");
-            locations.Add("술집 (Tavern)");
-        }
+        // locations를 LocationCoordinateRegistry에서 동적으로 조회
+        var locations = LocationCoordinateRegistry.GetAllSemanticNames();
 
         response.Locations.AddRange(locations.Select(LocationCoordinateRegistry.CreateLocationInfo));
 
@@ -611,6 +606,8 @@ public class MundusVivensGrpcService : MundusVivensGrpc.MundusVivensGrpcBase
     {
         Console.WriteLine($"🧠 [Dynamic Reflection] NPC '{agent.Persona.Name}'의 돌발 성찰 실행 중...");
 
+        string locationList = LocationCoordinateRegistry.GetPromptLocationList();
+
         string prompt = $$"""
 <role>NPC [{{agent.Persona.Name}}]의 상황 변화에 따른 행동 재계획(Dynamic Re-planning) 시스템</role>
 <task>원래 계획했던 행동을 수행하던 중 예기치 못한 사건으로 인해 행동이 중단되었습니다. NPC의 가치관과 사건 맥락을 고려하여 다음 행동을 결정해 주십시오.</task>
@@ -623,14 +620,7 @@ public class MundusVivensGrpcService : MundusVivensGrpc.MundusVivensGrpcBase
 
 <context>
 [이동 가능한 장소 목록]
-- 영주 저택 (Manor)
-- 성당 (Church)
-- 경비 초소 (Guard Post)
-- 연금술 공방 (Alchemy Lab)
-- 마을 광장 (Square)
-- 대장간 (Forge)
-- 뒷골목 (Back Alley)
-- 술집 (Tavern)
+{{locationList}}
 
 [NPC 페르소나]
 - 이름/직업: {{agent.Persona.Name}} / {{agent.Persona.Job}}
@@ -697,16 +687,7 @@ public class MundusVivensGrpcService : MundusVivensGrpc.MundusVivensGrpcBase
 
     private string MapToValidLocation(string rawLocation)
     {
-        if (string.IsNullOrWhiteSpace(rawLocation)) return "마을 광장 (Square)";
-        var lower = rawLocation.ToLower();
-        if (lower.Contains("저택") || lower.Contains("manor")) return "영주 저택 (Manor)";
-        if (lower.Contains("성당") || lower.Contains("church")) return "성당 (Church)";
-        if (lower.Contains("초소") || lower.Contains("경비") || lower.Contains("guard")) return "경비 초소 (Guard Post)";
-        if (lower.Contains("연금") || lower.Contains("공방") || lower.Contains("alchemy") || lower.Contains("lab")) return "연금술 공방 (Alchemy Lab)";
-        if (lower.Contains("대장간") || lower.Contains("forge")) return "대장간 (Forge)";
-        if (lower.Contains("골목") || lower.Contains("alley")) return "뒷골목 (Back Alley)";
-        if (lower.Contains("술집") || lower.Contains("tavern")) return "술집 (Tavern)";
-        return "마을 광장 (Square)";
+        return LocationCoordinateRegistry.ParseLocation(rawLocation);
     }
 }
 

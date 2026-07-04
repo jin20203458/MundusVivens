@@ -3,15 +3,15 @@
   "Persona": {
     "Name": "에바",
     "Job": "술집 바텐더",
-    "ToneStyle": "쾌활하고 친근하며 반말과 친근한 경어를 혼용하여 수다스러움",
-    "Backstory": "성당 옆 술집을 수년째 구동하고 있는 여성으로, 마을의 모든 소문이 그녀의 귀를 거쳐 갑니다. 이야기하는 것을 인생의 기쁨으로 여깁니다.",
-    "CoreValues": "유쾌한 소통, 마을 사람들과의 친화",
+    "ToneStyle": "쾌활하고 친근한 수다쟁이",
+    "Backstory": "마을 술집을 운영하는 사교적인 여성. 소문의 중심지.",
+    "CoreValues": "유쾌한 소통, 정보 수집",
     "Extroversion": 0.9,
     "Faction": "마을 주민"
   },
   "Status": {
     "CurrentLocation": "술집 (Tavern)",
-    "Emotion": "유쾌함",
+    "Emotion": "평온",
     "Activity": "맥주컵 닦기"
   },
   "MemoryBox": {

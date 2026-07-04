@@ -60,8 +60,8 @@ public class PersistenceService : IPersistenceService, IDisposable
         mapper.Entity<AgentInstance>()
             .Id(x => x.AgentId);
 
-        // 2. ConcurrentDictionary<string, KnownGossip> 매핑 설정
-        mapper.RegisterType<ConcurrentDictionary<string, KnownGossip>>(
+        // 2. ConcurrentDictionary<string, Belief> 매핑 설정
+        mapper.RegisterType<ConcurrentDictionary<string, Belief>>(
             dict =>
             {
                 var doc = new BsonDocument();
@@ -73,12 +73,12 @@ public class PersistenceService : IPersistenceService, IDisposable
             },
             bson =>
             {
-                var dict = new ConcurrentDictionary<string, KnownGossip>();
+                var dict = new ConcurrentDictionary<string, Belief>();
                 if (bson.IsDocument)
                 {
                     foreach (var kv in bson.AsDocument)
                     {
-                        var val = mapper.ToObject<KnownGossip>(kv.Value.AsDocument);
+                        var val = mapper.ToObject<Belief>(kv.Value.AsDocument);
                         dict[kv.Key] = val;
                     }
                 }
@@ -109,32 +109,6 @@ public class PersistenceService : IPersistenceService, IDisposable
                     }
                 }
                 return dict;
-            }
-        );
-
-        // 4. ConcurrentQueue<Episode> 매핑 설정
-        mapper.RegisterType<ConcurrentQueue<Episode>>(
-            queue =>
-            {
-                var arr = new BsonArray();
-                foreach (var ep in queue)
-                {
-                    arr.Add(mapper.ToDocument(ep));
-                }
-                return arr;
-            },
-            bson =>
-            {
-                var queue = new ConcurrentQueue<Episode>();
-                if (bson.IsArray)
-                {
-                    foreach (var val in bson.AsArray)
-                    {
-                        var ep = mapper.ToObject<Episode>(val.AsDocument);
-                        queue.Enqueue(ep);
-                    }
-                }
-                return queue;
             }
         );
     }

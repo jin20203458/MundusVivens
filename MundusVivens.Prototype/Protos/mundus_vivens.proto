@@ -18,7 +18,7 @@ message LocationInfo {
 service MundusVivensGrpc {
   rpc TriggerDialogue (TriggerDialogueRequest) returns (TriggerDialogueResponse);
   rpc GetAgentStatus (GetAgentStatusRequest) returns (GetAgentStatusResponse);
-  rpc InjectGossip (InjectGossipRequest) returns (InjectGossipResponse);
+  rpc InjectBelief (InjectBeliefRequest) returns (InjectBeliefResponse);
   rpc ProcessWorldTick (ProcessWorldTickRequest) returns (ProcessWorldTickResponse);
 
   // 관찰자 모드: 실시간 이벤트 스트림 구독 
@@ -67,13 +67,22 @@ message GetAgentStatusResponse {
   repeated string memories = 5;
 }
 
-message InjectGossipRequest {
-  uint32 subject_id = 1;
-  string content = 2;
-  uint32 target_agent_id = 3;
+enum ProtoBeliefType {
+  BELIEF_TYPE_UNSPECIFIED = 0;
+  BELIEF_TYPE_CORE = 1;
+  BELIEF_TYPE_WITNESSED = 2;
+  BELIEF_TYPE_HEARD = 3;
+  BELIEF_TYPE_OVERHEARD = 4;
 }
 
-message InjectGossipResponse {
+message InjectBeliefRequest {
+  uint32 target_agent_id = 1;
+  uint32 subject_id = 2;
+  string content = 3;
+  ProtoBeliefType belief_type = 4;
+}
+
+message InjectBeliefResponse {
   bool success = 1;
   string message = 2;
 }
@@ -119,7 +128,7 @@ message WorldEvent {
   oneof event {
     DialogueEvent dialogue = 2;         // 대화 시작/진행/종료
     MovementEvent movement = 3;         // NPC 이동
-    GossipEvent gossip = 4;             // 소문 전파 발생
+    BeliefShareEvent belief_share = 4;   // 믿음(소문) 전파 발생
     RelationshipEvent relationship = 5; // 관계도 변화
     TickEvent tick = 6;                 // 틱 진행
     AgentStatusEvent agent_status = 7;  // NPC 상태 변동 알림
@@ -150,11 +159,11 @@ message MovementEvent {
   LocationInfo to_location = 3;
 }
 
-message GossipEvent {
+message BeliefShareEvent {
   uint32 speaker_id = 1;
   uint32 listener_id = 2;
   uint32 subject_id = 3;
-  string gossip_content = 4;
+  string content = 4;
   bool is_mutated = 5;           
 }
 
@@ -217,6 +226,7 @@ message InitialAgentState {
   string activity = 5;
   float extroversion = 6;
   repeated RelationshipSnapshot relationships = 7;
+  string string_id = 8;
 }
 
 message GetWorldBootstrapResponse {
@@ -224,10 +234,18 @@ message GetWorldBootstrapResponse {
   repeated InitialAgentState agents = 2;
 }
 
+enum EmotionIntensity {
+  EMOTION_INTENSITY_UNSPECIFIED = 0;
+  EMOTION_INTENSITY_LOW = 1;
+  EMOTION_INTENSITY_MEDIUM = 2;
+  EMOTION_INTENSITY_HIGH = 3;
+}
+
 //  에이전트 감정 업데이트 정보
 message AgentEmotionUpdate {
   uint32 agent_id = 1;
   string new_emotion = 2;
+  EmotionIntensity intensity = 3;
 }
 
 message BatchUpdateAgentStatusRequest {
