@@ -138,8 +138,9 @@ flowchart LR
 ### A. 23:00 틱 성찰 및 스케줄 생성 프로세스
 1.  **트리거**: 월드 시계가 23:00 틱에 진입하면 `ProcessWorldTickAsync`가 가동됩니다.
 2.  **데이터 수집**: `MemoryBox`에서 오늘 진행된 `ActiveConversation` 대화록과 신규 변동된 `Belief` 목록을 수집합니다.
-3.  **성찰(Reflection) 프롬프트 실행**:
-    *   LLM에게 오늘 일과를 종합하여 성찰하게 하고, 중요한 깨달음이 있다면 `BeliefType.Core` 타입으로 승격시킵니다.
+3.  **성찰(Reflection) 프롬프트 실행 (`ReflectOnEpisodesAsync`)**:
+    *   LLM에게 오늘 하루 동안 발생한 에피소드(`Witnessed` 믿음 리스트)를 수집하여 전달하고, 깊이 깨달은 장기 기억(`core_facts`)을 도출하도록 프롬프트를 실행합니다.
+    *   도출된 성찰 기억은 현저성(`Salience = 1.0`), 중요도 기반 신뢰도(`Confidence`)를 가진 `BeliefType.Witnessed` 타입의 신규 `Belief` 객체로 등록되어 `MemoryBox`에 추가됩니다. (현재 코드 기준 `BeliefType.Core`로 승격하지 않고 감쇠 대상인 `Witnessed`로 저장됨)
 4.  **다음 날 스케줄 생성**:
     *   00:00 ~ 23:00까지 24시간 분량의 1시간 단위 스케줄(목표 장소 `TargetLocation`, 활동 내용 `Activity`)을 JSON 배열로 생성합니다.
 5.  **좌표 변환**: `LocationCoordinateRegistry`를 조회하여 장소 텍스트(예: "도서관", "광장")를 C++ 물리 엔진이 이해할 수 있는 이동 좌표(Waypoint)로 변환해 C++ 서버로 전달합니다.
