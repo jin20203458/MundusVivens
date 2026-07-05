@@ -180,7 +180,7 @@ Format:
 ### A. 성찰 훅 (Reflection Trigger)
 에이전트가 새로운 기억을 얻을 때마다 `poignancy` 점수를 누적합니다.
 
-$$\sum_{m \in \text{new\_memories}} \text{poignancy}(m) \ge 150$$
+$$\sum_{m \in \text{new memories}} \text{poignancy}(m) \ge 150$$
 
 누적 점수가 **150점**을 초과하면 에이전트는 즉시 일시정지하고 성찰 프로세스를 실행합니다.
 
