@@ -28,6 +28,10 @@ public class Belief
     public List<string> PropagationPath { get; set; } = new();   // 누적 전파 경로 (A -> B -> C)
     public int MutationCount { get; set; } = 0;                // 와전(변형) 횟수
     
+    // === 인과망 연결 정보 ===
+    public string? DerivedFrom { get; set; }                     // 이 신념의 원천이 되는 부모 신념 ID
+    public string? SupersededBy { get; set; }                    // 이 신념을 대체한 신규 신념 ID
+    
     // === 발설 완료 대상 추적 (중복 발화 방지) ===
     public HashSet<string> SharedWith { get; set; } = new();
 

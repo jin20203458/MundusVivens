@@ -13,6 +13,8 @@ public interface IPersistenceService
     ConcurrentDictionary<string, AgentInstance> LoadAllAgents();
     void UpsertAgent(AgentInstance agent);
     void ResetDatabase(IEnumerable<AgentInstance> initialAgents);
+    void ArchiveBelief(string agentId, Belief belief);
+    List<Belief> RecallBeliefs(string agentId, string? location, string? targetAgentId, List<string>? keywords, int limit = 5);
 }
 
 public class PersistenceService : IPersistenceService, IDisposable
@@ -59,6 +61,10 @@ public class PersistenceService : IPersistenceService, IDisposable
         // 1. AgentInstance의 기본 키(Primary Key) 설정
         mapper.Entity<AgentInstance>()
             .Id(x => x.AgentId);
+
+        // 1-2. ArchivedBelief의 기본 키 설정
+        mapper.Entity<ArchivedBelief>()
+            .Id(x => x.Id);
 
         // 2. ConcurrentDictionary<string, Belief> 매핑 설정
         mapper.RegisterType<ConcurrentDictionary<string, Belief>>(
@@ -127,6 +133,7 @@ public class PersistenceService : IPersistenceService, IDisposable
 
                 foreach (var agent in list)
                 {
+                    agent.MemoryBox.OnBeliefEvicted = evicted => ArchiveBelief(agent.AgentId, evicted);
                     dict[agent.AgentId] = agent;
                 }
                 
@@ -179,6 +186,101 @@ public class PersistenceService : IPersistenceService, IDisposable
             catch (Exception ex)
             {
                 Console.WriteLine($"[Persistence Error] Failed to reset database: {ex.Message}");
+            }
+        }
+    }
+
+    public void ArchiveBelief(string agentId, Belief belief)
+    {
+        lock (_dbLock)
+        {
+            if (_database == null) InitializeDatabase();
+            try
+            {
+                var col = _database!.GetCollection<ArchivedBelief>("cold_archive");
+                var archived = new ArchivedBelief
+                {
+                    Id = $"{agentId}_{belief.BeliefId}",
+                    AgentId = agentId,
+                    Belief = belief
+                };
+                col.Upsert(archived);
+                Console.WriteLine($"[Persistence] 📁 Archived evicted belief '{belief.Content}' for {agentId}");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[Persistence Error] Failed to archive belief: {ex.Message}");
+            }
+        }
+    }
+
+    public List<Belief> RecallBeliefs(string agentId, string? location, string? targetAgentId, List<string>? keywords, int limit = 5)
+    {
+        lock (_dbLock)
+        {
+            if (_database == null) InitializeDatabase();
+            try
+            {
+                var col = _database!.GetCollection<ArchivedBelief>("cold_archive");
+                
+                // 1. 해당 에이전트의 보관된 기억 쿼리
+                var query = col.Query().Where(x => x.AgentId == agentId);
+                var list = query.ToList();
+
+                // 2. 가중치 매칭 스코어 계산
+                var scored = list.Select(ab =>
+                {
+                    double score = 0.0;
+
+                    // 대상(인물) 매칭 가중치
+                    if (!string.IsNullOrEmpty(targetAgentId) && ab.Belief.SubjectId == targetAgentId)
+                    {
+                        score += 5.0; // 강한 인물 연상
+                    }
+
+                    // 장소 매칭 가중치 (기억 내용이나 대상에 장소 이름 포함 확인)
+                    if (!string.IsNullOrEmpty(location))
+                    {
+                        if (ab.Belief.Content.Contains(location, StringComparison.OrdinalIgnoreCase))
+                        {
+                            score += 3.0; // 장소 연상
+                        }
+                    }
+
+                    // 키워드 매칭 가중치
+                    if (keywords != null && keywords.Any())
+                    {
+                        foreach (var kw in keywords)
+                        {
+                            if (ab.Belief.Content.Contains(kw, StringComparison.OrdinalIgnoreCase))
+                            {
+                                score += 2.0;
+                            }
+                        }
+                    }
+
+                    // 중요도 가중치
+                    score += ab.Belief.Importance * 2.0;
+
+                    // 최신성(Recency) 가중치 (경과 시간 역산)
+                    var timeSpan = DateTime.UtcNow - ab.Belief.AcquiredAt;
+                    double recencyScore = Math.Max(0, 1.0 - (timeSpan.TotalHours / 72.0)); // 72시간 기준 선형 감쇠
+                    score += recencyScore * 1.5;
+
+                    return new { Archived = ab, Score = score };
+                })
+                .Where(x => x.Score > 0.0)
+                .OrderByDescending(x => x.Score)
+                .Take(limit)
+                .Select(x => x.Archived.Belief)
+                .ToList();
+
+                return scored;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[Persistence Error] Failed to recall beliefs: {ex.Message}");
+                return new List<Belief>();
             }
         }
     }

@@ -18,11 +18,19 @@ public class AppSettings
     public string SafetyThreshold { get; set; } = "BLOCK_NONE";
 }
 
+public class FurnitureConfig
+{
+    public string Name { get; set; } = string.Empty;
+    public string Type { get; set; } = string.Empty;
+    public CoordinatesConfig Offset { get; set; } = new();
+}
+
 public class LocationConfig
 {
     public string SemanticName { get; set; } = string.Empty;
     public System.Collections.Generic.List<string> Aliases { get; set; } = new();
     public CoordinatesConfig Coordinates { get; set; } = new();
+    public System.Collections.Generic.List<FurnitureConfig> Furniture { get; set; } = new();
 }
 
 public class CoordinatesConfig

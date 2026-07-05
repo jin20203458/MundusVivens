@@ -18,6 +18,13 @@ public class ChatMessage
     }
 }
 
+public class ArchivedBelief
+{
+    public string Id { get; set; } = string.Empty; // agentId_beliefId
+    public string AgentId { get; set; } = string.Empty;
+    public Belief Belief { get; set; } = new();
+}
+
 public class MemoryBox
 {
     private readonly object _lock = new();
@@ -29,10 +36,21 @@ public class MemoryBox
     public const int MaxTotalBeliefs = 40;
     public const int MaxCoreBeliefs = 5;
 
+    // 🆕 도태(Eviction) 발생 시 데이터베이스 아카이브로 넘겨주기 위한 이벤트 훅 (직렬화 무시)
+    [LiteDB.BsonIgnore]
+    public Action<Belief>? OnBeliefEvicted { get; set; }
+
     public void AddOrUpdateBelief(Belief newBelief)
     {
         lock (_lock)
         {
+            // 0. 중요도가 0.95 이상인 신념/기억은 Core로 자동 승격
+            if (newBelief.Importance >= 0.95 && newBelief.Type != BeliefType.Core)
+            {
+                newBelief.Type = BeliefType.Core;
+                Console.WriteLine($"[MemoryBox] 👑 Promoted belief '{newBelief.Content}' to Core Belief (Importance: {newBelief.Importance:F3})");
+            }
+
             // 1. 이미 존재하는 정보인지 ID로 확인
             Beliefs.AddOrUpdate(newBelief.BeliefId, newBelief, (id, old) => {
                 return newBelief;
@@ -59,7 +77,10 @@ public class MemoryBox
                 var targetToEvict = evictableCandidates.OrderBy(b => b.Importance).FirstOrDefault();
                 if (targetToEvict != null)
                 {
-                    Beliefs.TryRemove(targetToEvict.BeliefId, out _);
+                    if (Beliefs.TryRemove(targetToEvict.BeliefId, out var evicted))
+                    {
+                        OnBeliefEvicted?.Invoke(evicted);
+                    }
                 }
             }
         }

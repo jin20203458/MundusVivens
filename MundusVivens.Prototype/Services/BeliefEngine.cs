@@ -12,6 +12,7 @@ public interface IBeliefEngine
     Belief? SelectBeliefToShare(AgentInstance speaker, AgentInstance listener, IReadOnlyList<Belief> topKCandidates);
     Task ProcessBeliefSharingAsync(AgentInstance speaker, AgentInstance listener, Belief originalBelief, string sharedContent);
     void DecayBeliefs(AgentInstance agent, int currentTick);
+    void PropagateCausalCascade(AgentInstance agent, string parentBeliefId);
 }
 
 public class BeliefEngine : IBeliefEngine
@@ -233,6 +234,27 @@ public class BeliefEngine : IBeliefEngine
                 _lastDecayedTicks.Remove($"{agent.AgentId}_{id}");
                 Console.WriteLine($"[BeliefEngine] 🗑️ [기억 망각/도태] {agent.Persona.Name}이(가) '{removed.Content}' 정보를 오랜 방치로 잊었습니다 (Salience: {removed.Salience:F3})");
             }
+        }
+    }
+
+    public void PropagateCausalCascade(AgentInstance agent, string parentBeliefId)
+    {
+        if (!agent.MemoryBox.Beliefs.TryGetValue(parentBeliefId, out var parentBelief)) return;
+
+        var children = agent.MemoryBox.Beliefs.Values
+            .Where(b => b.DerivedFrom == parentBeliefId)
+            .ToList();
+
+        foreach (var child in children)
+        {
+            double oldConfidence = child.Confidence;
+            // Causal propagation: Child's confidence scales with parent's confidence.
+            child.Confidence = Math.Clamp(child.Confidence * parentBelief.Confidence, 0.0, 1.0);
+            
+            Console.WriteLine($"[BeliefEngine] 🔗 Causal cascade: Belief '{child.Content}' confidence updated {oldConfidence:F2} -> {child.Confidence:F2} (derived from parent '{parentBeliefId}')");
+            
+            // Recursively propagate
+            PropagateCausalCascade(agent, child.BeliefId);
         }
     }
 }

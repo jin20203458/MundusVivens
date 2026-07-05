@@ -100,4 +100,12 @@ public static class LocationCoordinateRegistry
             Position = new Vector3 { X = x, Y = y, Z = z }
         };
     }
+
+    public static List<LocationConfig> GetConfigs()
+    {
+        lock (_lock)
+        {
+            return _configs.ToList();
+        }
+    }
 }

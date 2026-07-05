@@ -170,8 +170,8 @@ message BeliefShareEvent {
 message RelationshipEvent {
   uint32 from_agent_id = 1;
   uint32 to_agent_id = 2;
-  int32 new_affinity = 3;
-  int32 affinity_delta = 4;
+  int32 new_liking = 3;
+  int32 liking_delta = 4;
   int32 new_trust = 5;
   int32 trust_delta = 6;
 }
@@ -229,9 +229,17 @@ message InitialAgentState {
   string string_id = 8;
 }
 
+message FurnitureInfo {
+  string name = 1;
+  string type = 2;
+  string parent_location = 3;
+  Vector3 position = 4;
+}
+
 message GetWorldBootstrapResponse {
   repeated LocationInfo locations = 1;
   repeated InitialAgentState agents = 2;
+  repeated FurnitureInfo furniture = 3;
 }
 
 enum EmotionIntensity {

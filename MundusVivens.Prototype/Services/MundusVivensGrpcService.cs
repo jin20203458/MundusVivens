@@ -302,24 +302,23 @@ public class MundusVivensGrpcService : MundusVivensGrpc.MundusVivensGrpcBase
         // 🆕 믿음 쇠퇴(Decay) 처리: 전역 루프를 제거하고 글로벌 틱 번호만 갱신 (Lazy Decay)
         _beliefEngine.CurrentTick = request.TickNumber;
 
-        // 🆕 23틱 (자정 직전) 검출 시 백그라운드로 성찰 및 스케줄링 태스크 실행
-        if (request.TickNumber % 24 == 23)
+        // 🆕 예측형 비동기 큐 및 스케줄 교체 처리
+        var activeAgents = _agentsAccessor().Values.Where(a => a.AgentId != "player").ToList();
+        foreach (var agent in activeAgents)
         {
-            _ = Task.Run(async () =>
+            // 1. 만료 틱 도달 시 스케줄 예비 버퍼 스왑 시도
+            _dailyPlanService.TrySwapNextSchedule(agent.AgentId, request.TickNumber);
+
+            // 2. 스케줄 잔여 틱 계산 및 예측형 큐 삽입 검사
+            int remainingTicks = agent.PlanExpirationTick - request.TickNumber;
+            if (remainingTicks <= 4)
             {
-                try
-                {
-                    await _dailyPlanService.PerformReflectionAndGenerateSchedulesAsync(request.TickNumber);
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"[Error] 백그라운드 성찰/스케줄 수립 실패: {ex.Message}");
-                }
-            });
+                _dailyPlanService.EnqueueReflection(agent.AgentId, remainingTicks);
+            }
         }
 
         var busyAgentIds = _agentsAccessor().Values
-            .Where(a => a.Status.IsInConversation)
+            .Where(a => a.Status.IsInConversation || _dailyPlanService.IsAgentBusy(a.AgentId))
             .Select(a => a.NumericId)
             .ToList();
 
@@ -446,8 +445,29 @@ public class MundusVivensGrpcService : MundusVivensGrpc.MundusVivensGrpcBase
 
         // locations를 LocationCoordinateRegistry에서 동적으로 조회
         var locations = LocationCoordinateRegistry.GetAllSemanticNames();
-
         response.Locations.AddRange(locations.Select(LocationCoordinateRegistry.CreateLocationInfo));
+
+        // 🆕 동적 가구(사물) 배치 정보 수집 및 전송
+        var locationConfigs = LocationCoordinateRegistry.GetConfigs();
+        foreach (var locConfig in locationConfigs)
+        {
+            if (locConfig.Furniture == null) continue;
+            foreach (var furnConfig in locConfig.Furniture)
+            {
+                // 부모 거점의 절대 좌표 + 오프셋 = 가구의 절대 좌표
+                float absoluteX = locConfig.Coordinates.X + furnConfig.Offset.X;
+                float absoluteY = locConfig.Coordinates.Y + furnConfig.Offset.Y;
+                float absoluteZ = locConfig.Coordinates.Z + furnConfig.Offset.Z;
+
+                response.Furniture.Add(new FurnitureInfo
+                {
+                    Name = furnConfig.Name,
+                    Type = furnConfig.Type,
+                    ParentLocation = locConfig.SemanticName,
+                    Position = new Vector3 { X = absoluteX, Y = absoluteY, Z = absoluteZ }
+                });
+            }
+        }
 
         return Task.FromResult(response);
     }
@@ -538,14 +558,22 @@ public class MundusVivensGrpcService : MundusVivensGrpc.MundusVivensGrpcBase
 
         if (request.Status == ReportJobStatusRequest.Types.JobStatus.Completed)
         {
-            Console.WriteLine($"✅ [JobGiver] NPC '{agent.Persona.Name}'가 Job {request.JobId}를 완료했습니다.");
+            Console.WriteLine($"✅ [JobGiver] NPC '{agent.Persona.Name}'가 Job {request.JobId}를 완료했습니다. (상세: {request.DetailedContext})");
             agent.Status.ActiveJobId = 0;
             agent.Status.ActiveJobLocation = string.Empty;
             agent.Status.ActiveJobX = 0f;
             agent.Status.ActiveJobY = 0f;
             agent.Status.ActiveJobZ = 0f;
             agent.Status.ActiveJobIntent = string.Empty;
-            agent.Status.LastCompletedHour = currentHour;
+
+            if (request.DetailedContext != null && request.DetailedContext.Contains("survival"))
+            {
+                agent.Status.LastCompletedHour = -1; // 생체 욕구 해결 후 즉시 새 스케줄 발급 허용
+            }
+            else
+            {
+                agent.Status.LastCompletedHour = currentHour;
+            }
         }
         else if (request.Status == ReportJobStatusRequest.Types.JobStatus.Failed)
         {
@@ -569,6 +597,20 @@ public class MundusVivensGrpcService : MundusVivensGrpc.MundusVivensGrpcBase
 
             Console.WriteLine($"⏸️ [JobGiver] NPC '{agent.Persona.Name}'의 Job {request.JobId}가 중단되었습니다. 사유: {reasonStr} (상세: {request.DetailedContext})");
 
+            // C++ 로컬 생체 욕구(Survival)로 인한 중단인 경우, LLM 성찰 없이 C++ 로컬 처리를 대기
+            if (request.DetailedContext != null && request.DetailedContext.Contains("survival"))
+            {
+                Console.WriteLine($"⏸️ [JobGiver] NPC '{agent.Persona.Name}'가 생체 욕구 해결 중이므로 C# 성찰을 생략하고 C++ 로컬 처리를 대기합니다.");
+                agent.Status.ActiveJobId = 0;
+                agent.Status.ActiveJobLocation = string.Empty;
+                agent.Status.ActiveJobX = 0f;
+                agent.Status.ActiveJobY = 0f;
+                agent.Status.ActiveJobZ = 0f;
+                agent.Status.ActiveJobIntent = "생체 욕구 충족 중";
+                response.Message = "생체 욕구 충족 중이므로 C# 성찰을 보류합니다.";
+                return response;
+            }
+
             if (request.ReasonCode == InterruptReason.DialogueBusy)
             {
                 Console.WriteLine($"⏸️ [JobGiver] NPC '{agent.Persona.Name}'가 대화 중이므로 대기합니다. (원래 계획: {agent.Status.ActiveJobIntent})");
@@ -578,7 +620,7 @@ public class MundusVivensGrpcService : MundusVivensGrpc.MundusVivensGrpcBase
             {
                 try
                 {
-                    var newJobPayload = await TriggerDynamicReflectionAsync(agent, reasonStr, request.DetailedContext, request.CurrentTick);
+                    var newJobPayload = await TriggerDynamicReflectionAsync(agent, reasonStr, request.DetailedContext ?? string.Empty, request.CurrentTick);
                     if (newJobPayload != null)
                     {
                         response.NewJob = newJobPayload;

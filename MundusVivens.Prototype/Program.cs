@@ -366,6 +366,177 @@ public class Program
         // 1. 루트 경로 진입 시 안내
         app.MapGet("/", () => Results.Ok("Project Mundus Vivens API Server is running. Dashboard is currently offline."));
 
+        // 🆕 Chunk B 기능 검증 통합 진단 엔드포인트
+        app.MapPost("/api/test/chunkb", (
+            IPersistenceService persistence,
+            IBeliefEngine beliefEngine) =>
+        {
+            var report = new Dictionary<string, object>();
+            
+            try
+            {
+                // --- 1. 더미 에이전트 생성 ---
+                var testAgent = new AgentInstance
+                {
+                    AgentId = "npc_test_chunkb",
+                    Persona = new Persona { Name = "테스트에이전트" }
+                };
+                
+                // OnBeliefEvicted 이벤트 바인딩
+                testAgent.MemoryBox.OnBeliefEvicted = evicted => persistence.ArchiveBelief(testAgent.AgentId, evicted);
+                
+                // --- 2. 기억 도태(Eviction) 및 콜드 아카이브 저장 검증 ---
+                int evictedCount = 0;
+                testAgent.MemoryBox.OnBeliefEvicted += (b) => { evictedCount++; };
+                
+                // MaxTotalBeliefs = 40 이므로 45개의 신념을 넣음
+                for (int i = 1; i <= 45; i++)
+                {
+                    testAgent.MemoryBox.AddOrUpdateBelief(new Belief
+                    {
+                        BeliefId = $"test_belief_{i}",
+                        SubjectId = "npc_eva",
+                        Content = $"테스트 에피소드 내용 {i}번. 장소는 술집.",
+                        Type = BeliefType.Witnessed,
+                        Confidence = 0.8,
+                        Salience = 0.5,
+                        EmotionalCharge = 0.2,
+                        AcquiredAt = DateTime.UtcNow.AddMinutes(-i)
+                    });
+                }
+                
+                bool evictionSuccess = testAgent.MemoryBox.Beliefs.Count == 40 && evictedCount == 5;
+                report["EvictionTest"] = new
+                {
+                    MemoryBoxCount = testAgent.MemoryBox.Beliefs.Count,
+                    EvictedCount = evictedCount,
+                    Success = evictionSuccess
+                };
+                
+                // --- 3. 연상 회상(Recall) 검증 ---
+                // "술집" 키워드로 Recall 조회
+                var recalled = persistence.RecallBeliefs(testAgent.AgentId, "술집", null, null, limit: 3);
+                bool recallSuccess = recalled.Count > 0 && recalled.All(b => b.Content.Contains("술집"));
+                report["RecallTest"] = new
+                {
+                    RecalledCount = recalled.Count,
+                    SampleContent = recalled.FirstOrDefault()?.Content,
+                    Success = recallSuccess
+                };
+                
+                // --- 4. 인과망 연쇄 반응(Causal Cascade) 검증 ---
+                var parentBelief = new Belief
+                {
+                    BeliefId = "parent_leak",
+                    SubjectId = "npc_valac",
+                    Content = "발락이 정보를 유출했다.",
+                    Type = BeliefType.Witnessed,
+                    Confidence = 0.8,
+                    Salience = 1.0,
+                    EmotionalCharge = 0.5
+                };
+                
+                var childBelief = new Belief
+                {
+                    BeliefId = "child_fear",
+                    SubjectId = "npc_valac",
+                    Content = "발락 때문에 우리 조직이 위험해질 것이다.",
+                    Type = BeliefType.Witnessed,
+                    Confidence = 0.8,
+                    Salience = 1.0,
+                    EmotionalCharge = 0.5,
+                    DerivedFrom = "parent_leak"
+                };
+                
+                testAgent.MemoryBox.AddOrUpdateBelief(parentBelief);
+                testAgent.MemoryBox.AddOrUpdateBelief(childBelief);
+                
+                // 부모 신념 확신도를 0.5로 하락 업데이트
+                parentBelief.Confidence = 0.5;
+                testAgent.MemoryBox.AddOrUpdateBelief(parentBelief);
+                
+                // 인과망 도미노 전파 실행
+                beliefEngine.PropagateCausalCascade(testAgent, "parent_leak");
+                
+                // 자식 신념 확신도 확인 (0.8 * 0.5 = 0.40)
+                var updatedChild = testAgent.MemoryBox.Beliefs["child_fear"];
+                bool causalSuccess = Math.Abs(updatedChild.Confidence - 0.4) < 0.01;
+                report["CausalCascadeTest"] = new
+                {
+                    ParentConfidence = parentBelief.Confidence,
+                    ChildConfidenceBefore = 0.8,
+                    ChildConfidenceAfter = updatedChild.Confidence,
+                    Success = causalSuccess
+                };
+                
+                // --- 5. 자아(Core) 승격 및 강등 순환 검증 ---
+                var coreTestAgent = new AgentInstance { AgentId = "npc_core_test" };
+                
+                // core_1은 낮은 중요도로 설정하여 강등 유도
+                coreTestAgent.MemoryBox.AddOrUpdateBelief(new Belief
+                {
+                    BeliefId = "core_1",
+                    Content = "핵심 신념 1",
+                    Type = BeliefType.Core,
+                    Confidence = 0.5,
+                    Salience = 0.5,
+                    EmotionalCharge = 0.1 // 중요도: 0.2 + 0.175 + 0.025 = 0.4
+                });
+                
+                // core_2 ~ 5는 높은 중요도로 설정
+                for (int i = 2; i <= 5; i++)
+                {
+                    coreTestAgent.MemoryBox.AddOrUpdateBelief(new Belief
+                    {
+                        BeliefId = $"core_{i}",
+                        Content = $"핵심 신념 {i}",
+                        Type = BeliefType.Core,
+                        Confidence = 1.0,
+                        Salience = 1.0,
+                        EmotionalCharge = 1.0 // 중요도: 1.0
+                    });
+                }
+                
+                int initialCoreCount = coreTestAgent.MemoryBox.Beliefs.Values.Count(b => b.Type == BeliefType.Core);
+                
+                // 0.95가 넘는 중요도의 신념 강제 주입 -> Core 자동 승격 유도
+                var highImportanceBelief = new Belief
+                {
+                    BeliefId = "high_importance_witness",
+                    Content = "교황의 어두운 진실을 목격했다.",
+                    Type = BeliefType.Witnessed,
+                    Confidence = 1.0,
+                    Salience = 1.0,
+                    EmotionalCharge = 0.9 // 중요도: 0.975
+                };
+                
+                coreTestAgent.MemoryBox.AddOrUpdateBelief(highImportanceBelief);
+                
+                int coreCountAfterPromotion = coreTestAgent.MemoryBox.Beliefs.Values.Count(b => b.Type == BeliefType.Core);
+                bool core1Demoted = coreTestAgent.MemoryBox.Beliefs["core_1"].Type == BeliefType.Witnessed;
+                bool newPromoted = coreTestAgent.MemoryBox.Beliefs["high_importance_witness"].Type == BeliefType.Core;
+                
+                bool coreSuccess = initialCoreCount == 5 && coreCountAfterPromotion == 5 && core1Demoted && newPromoted;
+                report["CorePromotionDemotionTest"] = new
+                {
+                    InitialCoreCount = initialCoreCount,
+                    CoreCountAfterPromotion = coreCountAfterPromotion,
+                    Core1Demoted = core1Demoted,
+                    NewPromoted = newPromoted,
+                    Success = coreSuccess
+                };
+                
+                report["OverallSuccess"] = evictionSuccess && recallSuccess && causalSuccess && coreSuccess;
+            }
+            catch (Exception ex)
+            {
+                report["OverallSuccess"] = false;
+                report["Error"] = ex.Message;
+            }
+            
+            return Results.Ok(report);
+        });
+
         // 2. Server-Sent Events (SSE) 실시간 이벤트 스트림
         app.MapGet("/api/events", async (HttpContext httpContext, IWorldEventBroadcaster broadcaster, CancellationToken ct) =>
         {

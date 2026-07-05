@@ -1,24 +1,44 @@
 {
+  "_Comment": "⚠️ [IMPORTANT] Day 2 이후의 API 폭주 방지(Staggering)를 위해, NPC들의 첫날(Day 1) 일과 종료 시각(Plan End Time)은 반드시 서로 다른 시각(예: NPC 1은 14:00, NPC 2는 18:00, NPC 3은 22:00)으로 시차를 두어 작성해야 합니다.",
   "Locations": [
     {
       "SemanticName": "성당 (Church)",
       "Aliases": ["성당", "church"],
-      "Coordinates": { "X": 20.0, "Y": 0.0, "Z": 80.0 }
+      "Coordinates": { "X": 20.0, "Y": 0.0, "Z": 80.0 },
+      "Furniture": [
+        { "Name": "성당 예배 제단", "Type": "Pray", "Offset": { "X": 0.0, "Y": 0.0, "Z": 5.0 } },
+        { "Name": "성당 장의자 A", "Type": "Sit", "Offset": { "X": -2.0, "Y": 0.0, "Z": -4.0 } },
+        { "Name": "성당 장의자 B", "Type": "Sit", "Offset": { "X": 2.0, "Y": 0.0, "Z": -4.0 } }
+      ]
     },
     {
       "SemanticName": "광장 (Square)",
       "Aliases": ["광장", "마을 광장", "square"],
-      "Coordinates": { "X": 50.0, "Y": 0.0, "Z": 50.0 }
+      "Coordinates": { "X": 50.0, "Y": 0.0, "Z": 50.0 },
+      "Furniture": [
+        { "Name": "광장 분수대 벤치", "Type": "Sit", "Offset": { "X": 0.0, "Y": 0.0, "Z": 3.0 } },
+        { "Name": "광장 잡화 가판대", "Type": "Eat", "Offset": { "X": 3.0, "Y": 0.0, "Z": -2.0 } }
+      ]
     },
     {
       "SemanticName": "뒷골목 (Back Alley)",
       "Aliases": ["뒷골목", "골목", "back alley", "alley"],
-      "Coordinates": { "X": 15.0, "Y": 0.0, "Z": 50.0 }
+      "Coordinates": { "X": 15.0, "Y": 0.0, "Z": 50.0 },
+      "Furniture": [
+        { "Name": "뒷골목 나무상자 의자", "Type": "Sit", "Offset": { "X": -1.0, "Y": 0.0, "Z": 2.0 } },
+        { "Name": "뒷골목 가마니 침대", "Type": "Sleep", "Offset": { "X": -3.0, "Y": 0.0, "Z": 0.0 } }
+      ]
     },
     {
       "SemanticName": "술집 (Tavern)",
       "Aliases": ["술집", "주점", "tavern"],
-      "Coordinates": { "X": 30.0, "Y": 0.0, "Z": 40.0 }
+      "Coordinates": { "X": 30.0, "Y": 0.0, "Z": 40.0 },
+      "Furniture": [
+        { "Name": "술집 바 테이블", "Type": "Drink", "Offset": { "X": 0.0, "Y": 0.0, "Z": 2.0 } },
+        { "Name": "술집 식탁 A", "Type": "Eat", "Offset": { "X": -3.0, "Y": 0.0, "Z": -2.0 } },
+        { "Name": "술집 나무의자 A1", "Type": "Sit", "Offset": { "X": -3.0, "Y": 0.0, "Z": -3.0 } },
+        { "Name": "술집 나무의자 A2", "Type": "Sit", "Offset": { "X": -2.0, "Y": 0.0, "Z": -3.0 } }
+      ]
     }
   ],
   "Agents": [
@@ -40,7 +60,11 @@
       },
       "MemoryBox": {
         "CoreMemories": []
-      }
+      },
+      "InitialSchedule": [
+        { "StartHour": 0, "EndHour": 8, "TargetLocation": "술집 (Tavern)", "Activity": "취침 및 휴식" },
+        { "StartHour": 8, "EndHour": 12, "TargetLocation": "술집 (Tavern)", "Activity": "바텐더 정비 및 청소" }
+      ]
     },
     {
       "AgentId": "npc_kyle",
@@ -65,7 +89,12 @@
             "Importance": 9
           }
         ]
-      }
+      },
+      "InitialSchedule": [
+        { "StartHour": 0, "EndHour": 8, "TargetLocation": "성당 (Church)", "Activity": "취침 및 기도" },
+        { "StartHour": 8, "EndHour": 12, "TargetLocation": "성당 (Church)", "Activity": "성수 관리" },
+        { "StartHour": 12, "EndHour": 16, "TargetLocation": "광장 (Square)", "Activity": "마을 포교 및 정화" }
+      ]
     },
     {
       "AgentId": "npc_valac",
@@ -90,7 +119,12 @@
             "Importance": 9
           }
         ]
-      }
+      },
+      "InitialSchedule": [
+        { "StartHour": 0, "EndHour": 9, "TargetLocation": "뒷골목 (Back Alley)", "Activity": "취침 및 정비" },
+        { "StartHour": 9, "EndHour": 15, "TargetLocation": "술집 (Tavern)", "Activity": "정보 수집 및 술마시기" },
+        { "StartHour": 15, "EndHour": 20, "TargetLocation": "뒷골목 (Back Alley)", "Activity": "길드 장부 검토" }
+      ]
     },
     {
       "AgentId": "player",

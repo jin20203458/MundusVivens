@@ -34,6 +34,7 @@ public class DialogueOrchestrator : IDialogueOrchestrator
     private readonly IWorldEventBroadcaster _broadcaster;
     private readonly IEmbeddingCache _embeddingCache;
     private readonly IWorldContextService _worldContext;
+    private readonly IPersistenceService _persistence;
 
     public DialogueOrchestrator(
         IGeminiApiService apiService,
@@ -41,7 +42,8 @@ public class DialogueOrchestrator : IDialogueOrchestrator
         MemoryEventLogger memoryLogger,
         IWorldEventBroadcaster broadcaster,
         IEmbeddingCache embeddingCache,
-        IWorldContextService worldContext)
+        IWorldContextService worldContext,
+        IPersistenceService persistence)
     {
         _apiService = apiService;
         _beliefEngine = beliefEngine;
@@ -49,6 +51,7 @@ public class DialogueOrchestrator : IDialogueOrchestrator
         _broadcaster = broadcaster;
         _embeddingCache = embeddingCache;
         _worldContext = worldContext;
+        _persistence = persistence;
     }
 
     public async Task<DialogueResult> RunConversationAsync(AgentInstance agentA, AgentInstance agentB, ulong taskId = 0, CancellationToken cancellationToken = default)
@@ -87,6 +90,20 @@ public class DialogueOrchestrator : IDialogueOrchestrator
         Console.WriteLine($"💬 다자간 대화 시작: {string.Join(" ◀ ▷ ", participants.Select(p => p.Persona.Name))}");
         Console.WriteLine($"📍 위치: {participants[0].Status.CurrentLocation}");
         Console.WriteLine($"=======================================================\n");
+
+        // 🆕 대화 시작 전 참가자들 각각 연상 기억 복원 (장소, 타 참가자들 기준)
+        foreach (var p in participants)
+        {
+            var otherParticipantIds = participants.Where(o => o.AgentId != p.AgentId).Select(o => o.AgentId).ToList();
+            foreach (var otherId in otherParticipantIds)
+            {
+                var recalled = _persistence.RecallBeliefs(p.AgentId, p.Status.CurrentLocation, otherId, null, limit: 3);
+                foreach (var belief in recalled)
+                {
+                    p.MemoryBox.AddOrUpdateBelief(belief);
+                }
+            }
+        }
 
         // 1. Decay beliefs for all participants
         foreach (var p in participants)
@@ -150,7 +167,12 @@ public class DialogueOrchestrator : IDialogueOrchestrator
             foreach (var other in participants.Where(o => o.AgentId != p.AgentId))
             {
                 var rel = GetOrCreateRelationship(p, other.AgentId);
-                relsStr.Add($"{other.Persona.Name}에 대한 태도: 호감도 {rel.Liking}/100 ({PromptFormattingHelpers.GetLikingLabel(rel.Liking)}), 신뢰도 {rel.Trust}/100 ({PromptFormattingHelpers.GetTrustLabel(rel.Trust)})");
+                string relInfo = $"{other.Persona.Name}에 대한 태도: 호감도 {rel.Liking}/100 ({PromptFormattingHelpers.GetLikingLabel(rel.Liking)}), 신뢰도 {rel.Trust}/100 ({PromptFormattingHelpers.GetTrustLabel(rel.Trust)})";
+                if (!string.IsNullOrEmpty(rel.ImpressionSummary))
+                {
+                    relInfo += $", 인상/평가: \"{rel.ImpressionSummary}\"";
+                }
+                relsStr.Add(relInfo);
             }
             
             // 통합 믿음 리스트 중 중요도 순 Top-10 가공
@@ -417,8 +439,8 @@ public class DialogueOrchestrator : IDialogueOrchestrator
                     {
                         FromAgentId = fromAgent.NumericId,
                         ToAgentId = toAgent.NumericId,
-                        NewAffinity = rel.Liking,
-                        AffinityDelta = rc.LikingDelta,
+                        NewLiking = rel.Liking,
+                        LikingDelta = rc.LikingDelta,
                         NewTrust = rel.Trust,
                         TrustDelta = rc.TrustDelta
                     }

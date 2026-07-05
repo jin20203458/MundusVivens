@@ -67,6 +67,13 @@ namespace MundusVivens.Prototype.Services
                 return (false, "플레이어가 이미 대화 진행 중입니다.", 0, string.Empty);
             }
 
+            // 🆕 플레이어 대화 시작 전 연상 기억 복원 (장소 및 플레이어 기준)
+            var recalled = _persistence.RecallBeliefs(npc.AgentId, npc.Status.CurrentLocation, playerId, null, limit: 5);
+            foreach (var belief in recalled)
+            {
+                npc.MemoryBox.AddOrUpdateBelief(belief);
+            }
+
             // Lock the agents
             player.Status.IsInConversation = true;
             npc.Status.IsInConversation = true;
@@ -155,7 +162,7 @@ namespace MundusVivens.Prototype.Services
 
 [대화 상대방 정보]
 - 이름/직업: {{player.Persona.Name}} / {{player.Persona.Job}}
-- 상대에 대한 나의 태도: 호감도 {{rel.Liking}}/100 ({{PromptFormattingHelpers.GetLikingLabel(rel.Liking)}}), 신뢰도 {{rel.Trust}}/100 ({{PromptFormattingHelpers.GetTrustLabel(rel.Trust)}})
+- 상대에 대한 나의 태도: 호감도 {{rel.Liking}}/100 ({{PromptFormattingHelpers.GetLikingLabel(rel.Liking)}}), 신뢰도 {{rel.Trust}}/100 ({{PromptFormattingHelpers.GetTrustLabel(rel.Trust)}}){{(!string.IsNullOrEmpty(rel.ImpressionSummary) ? $", 인상/평가: \"{rel.ImpressionSummary}\"" : "")}}
 
 [내가 알고 있는 소문 목록 (최대 3개 선별)]
 {{knownGossipsStr}}
@@ -278,7 +285,7 @@ namespace MundusVivens.Prototype.Services
 
 [대화 상대방 정보]
 - 이름/직업: {{player.Persona.Name}} / {{player.Persona.Job}}
-- 상대에 대한 나의 태도: 호감도 {{rel.Liking}}/100 ({{PromptFormattingHelpers.GetLikingLabel(rel.Liking)}}), 신뢰도 {{rel.Trust}}/100 ({{PromptFormattingHelpers.GetTrustLabel(rel.Trust)}})
+- 상대에 대한 나의 태도: 호감도 {{rel.Liking}}/100 ({{PromptFormattingHelpers.GetLikingLabel(rel.Liking)}}), 신뢰도 {{rel.Trust}}/100 ({{PromptFormattingHelpers.GetTrustLabel(rel.Trust)}}){{(!string.IsNullOrEmpty(rel.ImpressionSummary) ? $", 인상/평가: \"{rel.ImpressionSummary}\"" : "")}}
 
 [내가 알고 있는 소문 목록 (최대 3개 선별)]
 {{knownGossipsStr}}
@@ -447,14 +454,14 @@ namespace MundusVivens.Prototype.Services
                 {
                     Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
                     Relationship = new RelationshipEvent
-                    {
-                        FromAgentId = player.NumericId,
-                        ToAgentId = npc.NumericId,
-                        NewAffinity = relPlayerToNpc.Liking,
-                        AffinityDelta = likingDeltaAToB,
-                        NewTrust = relPlayerToNpc.Trust,
-                        TrustDelta = trustDeltaAToB
-                    }
+                {
+                    FromAgentId = player.NumericId,
+                    ToAgentId = npc.NumericId,
+                    NewLiking = relPlayerToNpc.Liking,
+                    LikingDelta = likingDeltaAToB,
+                    NewTrust = relPlayerToNpc.Trust,
+                    TrustDelta = trustDeltaAToB
+                }
                 };
                 await _broadcaster.BroadcastAsync(relEventAToB);
 
@@ -462,14 +469,14 @@ namespace MundusVivens.Prototype.Services
                 {
                     Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
                     Relationship = new RelationshipEvent
-                    {
-                        FromAgentId = npc.NumericId,
-                        ToAgentId = player.NumericId,
-                        NewAffinity = relNpcToPlayer.Liking,
-                        AffinityDelta = likingDeltaBToA,
-                        NewTrust = relNpcToPlayer.Trust,
-                        TrustDelta = trustDeltaBToA
-                    }
+                {
+                    FromAgentId = npc.NumericId,
+                    ToAgentId = player.NumericId,
+                    NewLiking = relNpcToPlayer.Liking,
+                    LikingDelta = likingDeltaBToA,
+                    NewTrust = relNpcToPlayer.Trust,
+                    TrustDelta = trustDeltaBToA
+                }
                 };
                 await _broadcaster.BroadcastAsync(relEventBToA);
 
