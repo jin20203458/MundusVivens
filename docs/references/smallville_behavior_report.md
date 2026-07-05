@@ -96,7 +96,7 @@ flowchart LR
 ### 2단계: 색인 및 중요도 평가 (`associative_memory.py`)
 *   새 노드를 생성하고 LLM(`poignancy_event_v1.txt`)을 호출하여 $1 \sim 10$점의 중요도(`poignancy`)를 부여합니다.
 *   키워드 역인덱스(`kw_to_event`)에 등록하고 `importance_trigger_curr` 게이지를 차감합니다:
-    $$\text{importance\_trigger\_curr} \longleftarrow \text{importance\_trigger\_curr} - \text{poignancy}$$
+    $$\text{importance trigger curr} \longleftarrow \text{importance trigger curr} - \text{poignancy}$$
 
 ### 3단계: 삼요소 인출 연산 (`retrieve.py`)
 *   현재 상황 또는 대화 상대방을 쿼리 $q$로 삼아 세 가지 가중 합산 점수를 연산합니다:
