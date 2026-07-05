@@ -126,9 +126,16 @@ public class DialogueOrchestrator : IDialogueOrchestrator
                 _ => "정확 전달 (알고 있는 소문 내용을 있는 그대로 최대한 정확하게 사실적으로 전달하십시오.)"
             };
             
+            string levelTag = distortionLevel switch
+            {
+                2 => "악의적 변형/조작",
+                1 => "살짝 부풀림/과장",
+                _ => "정확히 그대로 전달"
+            };
+            
             beliefInstructions.Add($"- 화자: {speaker.Persona.Name}, 전달 대상: {targetListener.Persona.Name}\n" +
                                    $"  소문 대상: {belief.SubjectId}, 소문 내용: \"{belief.Content}\"\n" +
-                                   $"  왜곡 가이드라인 [레벨 {distortionLevel}]: {levelDesc}\n" +
+                                   $"  왜곡 지침 [{levelTag}]: {levelDesc}\n" +
                                    $"  지시: 대화 중 기회가 된다면 상대방 실명을 언급하며 이 가이드라인에 맞추어 소문을 자연스럽게 흘리거나 폭로하십시오.");
         }
         string gossipInstructionsStr = beliefInstructions.Any() 
@@ -143,7 +150,7 @@ public class DialogueOrchestrator : IDialogueOrchestrator
             foreach (var other in participants.Where(o => o.AgentId != p.AgentId))
             {
                 var rel = GetOrCreateRelationship(p, other.AgentId);
-                relsStr.Add($"{other.Persona.Name}에 대한 태도(호감도: {rel.Liking}/100, 신뢰도: {rel.Trust}/100)");
+                relsStr.Add($"{other.Persona.Name}에 대한 태도: 호감도 {rel.Liking}/100 ({PromptFormattingHelpers.GetLikingLabel(rel.Liking)}), 신뢰도 {rel.Trust}/100 ({PromptFormattingHelpers.GetTrustLabel(rel.Trust)})");
             }
             
             // 통합 믿음 리스트 중 중요도 순 Top-10 가공
@@ -176,7 +183,7 @@ public class DialogueOrchestrator : IDialogueOrchestrator
                     _ => "기억"
                 };
 
-                beliefLines.Add($"- {timeTag} {beliefTypeDesc} (주관적 확신도: {(int)(b.Confidence * 100)}%): \"{b.Content}\" (대상: {b.SubjectId})");
+                beliefLines.Add($"- {timeTag} {beliefTypeDesc} (확신도: {PromptFormattingHelpers.GetConfidenceLabel(b.Confidence)}): \"{b.Content}\" (대상: {b.SubjectId})");
             }
             
             string relevantMemoriesStr = string.Join("\n", beliefLines);
@@ -225,7 +232,7 @@ public class DialogueOrchestrator : IDialogueOrchestrator
 [대화 및 분석 규칙]
 1. lines (대본):
    - 참여자들이 나누는 대화 대본을 순차적으로 작성하십시오.
-   - 대사 수: 총 {{participants.Count * 2}}줄 내외로 작성하십시오. (각 참여자가 골고루 1~2회 이상 발언하도록 유도)
+   - 대사 수: 총 {{participants.Count * 2}}줄 내외로 작성하되, 각 에이전트의 성격과 외향성(Extroversion), 현재 감정에 맞춰 대사 비중과 주도권을 자유롭게 조절하십시오. (외향적이거나 감정이 격앙된 에이전트가 대화를 주도하고, 내향적이거나 억압된 에이전트는 짧게 응답하거나 답을 아끼도록 연기)
    - 대본에는 대사 텍스트만 포함하고, 행동 묘사나 지문 등의 메타 설명은 완전히 배제하십시오.
    - 각 참여자의 성격/말투/태도를 적극 연기하십시오.
 2. summary (대화 요약):

@@ -197,7 +197,7 @@ public class DailyPlanService : IDailyPlanService
             .ToList();
 
         string coreMemoriesList = sortedBeliefs.Any()
-            ? string.Join("\n", sortedBeliefs.Select(b => $"- {b.Content} (중요도: {b.Importance:F2})"))
+            ? string.Join("\n", sortedBeliefs.Select(b => $"- {b.Content} (중요도: {b.Importance:F2} - {PromptFormattingHelpers.GetImportanceLabel(b.Importance)})"))
             : "마음에 간직하고 있는 특별한 장기 기억이 없습니다.";
 
         string locationList = LocationCoordinateRegistry.GetPromptLocationList();

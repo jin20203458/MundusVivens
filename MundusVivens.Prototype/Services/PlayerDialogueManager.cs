@@ -118,7 +118,7 @@ namespace MundusVivens.Prototype.Services
                     BeliefType.Overheard => "얼핏 엿들은 이야기",
                     _ => "기억"
                 };
-                beliefLines.Add($"- {timeTag} {beliefTypeDesc} (확신도: {(int)(b.Confidence * 100)}%): \"{b.Content}\"");
+                beliefLines.Add($"- {timeTag} {beliefTypeDesc} (확신도: {PromptFormattingHelpers.GetConfidenceLabel(b.Confidence)}): \"{b.Content}\"");
             }
 
             string relevantMemoriesStr = string.Join("\n", beliefLines);
@@ -155,7 +155,7 @@ namespace MundusVivens.Prototype.Services
 
 [대화 상대방 정보]
 - 이름/직업: {{player.Persona.Name}} / {{player.Persona.Job}}
-- 상대에 대한 나의 태도: 호감도 {{rel.Liking}}/100, 신뢰도 {{rel.Trust}}/100
+- 상대에 대한 나의 태도: 호감도 {{rel.Liking}}/100 ({{PromptFormattingHelpers.GetLikingLabel(rel.Liking)}}), 신뢰도 {{rel.Trust}}/100 ({{PromptFormattingHelpers.GetTrustLabel(rel.Trust)}})
 
 [내가 알고 있는 소문 목록 (최대 3개 선별)]
 {{knownGossipsStr}}
@@ -236,7 +236,7 @@ namespace MundusVivens.Prototype.Services
                     BeliefType.Overheard => "얼핏 엿들은 이야기",
                     _ => "기억"
                 };
-                beliefLines.Add($"- {timeTag} {beliefTypeDesc} (확신도: {(int)(b.Confidence * 100)}%): \"{b.Content}\"");
+                beliefLines.Add($"- {timeTag} {beliefTypeDesc} (확신도: {PromptFormattingHelpers.GetConfidenceLabel(b.Confidence)}): \"{b.Content}\"");
             }
 
             string relevantMemoriesStr = string.Join("\n", beliefLines);
@@ -278,7 +278,7 @@ namespace MundusVivens.Prototype.Services
 
 [대화 상대방 정보]
 - 이름/직업: {{player.Persona.Name}} / {{player.Persona.Job}}
-- 상대에 대한 나의 태도: 호감도 {{rel.Liking}}/100, 신뢰도 {{rel.Trust}}/100
+- 상대에 대한 나의 태도: 호감도 {{rel.Liking}}/100 ({{PromptFormattingHelpers.GetLikingLabel(rel.Liking)}}), 신뢰도 {{rel.Trust}}/100 ({{PromptFormattingHelpers.GetTrustLabel(rel.Trust)}})
 
 [내가 알고 있는 소문 목록 (최대 3개 선별)]
 {{knownGossipsStr}}
