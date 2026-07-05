@@ -140,7 +140,7 @@ flowchart LR
 2.  **데이터 수집**: `MemoryBox`에서 오늘 진행된 `ActiveConversation` 대화록과 신규 변동된 `Belief` 목록을 수집합니다.
 3.  **성찰(Reflection) 프롬프트 실행 (`ReflectOnEpisodesAsync`)**:
     *   LLM에게 오늘 하루 동안 발생한 에피소드(`Witnessed` 믿음 리스트)를 수집하여 전달하고, 깊이 깨달은 장기 기억(`core_facts`)을 도출하도록 프롬프트를 실행합니다.
-    *   도출된 성찰 기억은 현저성(`Salience = 1.0`), 중요도 기반 신뢰도(`Confidence`)를 가진 `BeliefType.Witnessed` 타입의 신규 `Belief` 객체로 등록되어 `MemoryBox`에 추가됩니다. (현재 코드 기준 `BeliefType.Core`로 승격하지 않고 감쇠 대상인 `Witnessed`로 저장됨)
+    *   **의도적 설계 (Core 비대화 방지)**: 3일 단기 테스트용인 스몰빌과 달리, 본 프로젝트는 **게임시간 년(Year) 단위의 장기 구동을 목표**로 하므로 매일 생성되는 성찰 기억이 `BeliefType.Core`(면역)로 무제한 누적되는 것을 방지합니다. 따라서 성찰 결과는 초기 현저성(`Salience = 1.0`)을 가진 `BeliefType.Witnessed` 타입으로 등록되어 자연스러운 감쇠 및 예산 도태(Eviction) 순환 구조에 참여합니다.
 4.  **다음 날 스케줄 생성**:
     *   00:00 ~ 23:00까지 24시간 분량의 1시간 단위 스케줄(목표 장소 `TargetLocation`, 활동 내용 `Activity`)을 JSON 배열로 생성합니다.
 5.  **좌표 변환**: `LocationCoordinateRegistry`를 조회하여 장소 텍스트(예: "도서관", "광장")를 C++ 물리 엔진이 이해할 수 있는 이동 좌표(Waypoint)로 변환해 C++ 서버로 전달합니다.
