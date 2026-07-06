@@ -565,7 +565,7 @@ public class DialogueOrchestrator : IDialogueOrchestrator
                 ulong newJobId = MundusVivensGrpcService.GenerateNextJobId();
                 string correctedLocation = MapToValidLocation(nj.TargetLocation);
 
-                var (targetX, targetY, targetZ) = LocationCoordinateRegistry.GetCoordinates(correctedLocation);
+                var (targetX, targetY, targetZ) = LocationCoordinateRegistry.GetTargetCoordinate(agent.Status.CurrentLocation, correctedLocation);
                 agent.Status.ActiveJobId = newJobId;
                 agent.Status.ActiveJobLocation = correctedLocation;
                 agent.Status.ActiveJobX = targetX;

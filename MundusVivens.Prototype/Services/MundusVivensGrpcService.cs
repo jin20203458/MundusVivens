@@ -46,6 +46,7 @@ public class MundusVivensGrpcService : MundusVivensGrpc.MundusVivensGrpcBase
     private readonly IDailyPlanService _dailyPlanService; // 🆕 일일 스케줄 및 성찰 서비스 추가
     private readonly IBeliefEngine _beliefEngine;
     private readonly IGeminiApiService _apiService;
+    private readonly IPersistenceService _persistenceService;
 
     public MundusVivensGrpcService(
         InteractionScheduler scheduler,
@@ -54,7 +55,8 @@ public class MundusVivensGrpcService : MundusVivensGrpc.MundusVivensGrpcBase
         IPlayerDialogueManager playerDialogueManager,
         IDailyPlanService dailyPlanService,
         IBeliefEngine beliefEngine,
-        IGeminiApiService apiService)
+        IGeminiApiService apiService,
+        IPersistenceService persistenceService)
     {
         _scheduler = scheduler;
         _agentsAccessor = agentsAccessor;
@@ -63,6 +65,7 @@ public class MundusVivensGrpcService : MundusVivensGrpc.MundusVivensGrpcBase
         _dailyPlanService = dailyPlanService;
         _beliefEngine = beliefEngine;
         _apiService = apiService;
+        _persistenceService = persistenceService;
     }
 
     public override async Task<TriggerDialogueResponse> TriggerDialogue(TriggerDialogueRequest request, ServerCallContext context)
@@ -505,6 +508,11 @@ public class MundusVivensGrpcService : MundusVivensGrpc.MundusVivensGrpcBase
             }
 
             // 2. 이미 활성화된 Job이 없고, 현재 시간에 완료한 작업이 없다면 새 Job 생성
+            if (agent.Status.ActiveJobIntent == "생체 욕구 충족 중")
+            {
+                continue;
+            }
+
             if (agent.Status.LastCompletedHour != currentHour)
             {
                 var scheduleItems = _dailyPlanService.GetScheduleForAgent(agent.AgentId);
@@ -512,7 +520,7 @@ public class MundusVivensGrpcService : MundusVivensGrpc.MundusVivensGrpcBase
                 if (item != null && item.Activity != "대기")
                 {
                     ulong newJobId = GenerateNextJobId();
-                    var (targetX, targetY, targetZ) = LocationCoordinateRegistry.GetCoordinates(item.TargetLocation);
+                    var (targetX, targetY, targetZ) = LocationCoordinateRegistry.GetTargetCoordinate(agent.Status.CurrentLocation, item.TargetLocation);
                     agent.Status.ActiveJobId = newJobId;
                     agent.Status.ActiveJobLocation = item.TargetLocation;
                     agent.Status.ActiveJobX = targetX;
@@ -559,6 +567,10 @@ public class MundusVivensGrpcService : MundusVivensGrpc.MundusVivensGrpcBase
         if (request.Status == ReportJobStatusRequest.Types.JobStatus.Completed)
         {
             Console.WriteLine($"✅ [JobGiver] NPC '{agent.Persona.Name}'가 Job {request.JobId}를 완료했습니다. (상세: {request.DetailedContext})");
+
+            string completedLocation = agent.Status.ActiveJobLocation;
+            string completedIntent = agent.Status.ActiveJobIntent;
+
             agent.Status.ActiveJobId = 0;
             agent.Status.ActiveJobLocation = string.Empty;
             agent.Status.ActiveJobX = 0f;
@@ -573,6 +585,70 @@ public class MundusVivensGrpcService : MundusVivensGrpc.MundusVivensGrpcBase
             else
             {
                 agent.Status.LastCompletedHour = currentHour;
+            }
+
+            // 원정 이동 완료 시 조기 취소 및 즉시 재성찰
+            if (!string.IsNullOrEmpty(completedIntent) && completedIntent.Contains("이동") && !string.IsNullOrEmpty(completedLocation))
+            {
+                Console.WriteLine($"🏁 [Arrival] NPC '{agent.Persona.Name}'가 목적지 '{completedLocation}'에 무사히 도착했습니다! 남은 원정 스케줄을 취소하고 현지에서의 신규 일정을 수립합니다.");
+
+                // 1. 남은 오늘 스케줄 단축
+                if (agent.CurrentSchedule != null)
+                {
+                    var updatedSchedule = new List<DailyScheduleItem>();
+                    foreach (var item in agent.CurrentSchedule)
+                    {
+                        if (item.StartHour <= currentHour && currentHour <= item.EndHour)
+                        {
+                            updatedSchedule.Add(new DailyScheduleItem
+                            {
+                                StartHour = item.StartHour,
+                                EndHour = currentHour,
+                                TargetLocation = item.TargetLocation,
+                                Activity = item.Activity
+                            });
+                        }
+                        else if (item.EndHour < currentHour)
+                        {
+                            updatedSchedule.Add(item);
+                        }
+                    }
+                    agent.CurrentSchedule = updatedSchedule;
+                }
+
+                // 2. 동적 재성찰 호출 (동기 대기)
+                try
+                {
+                    string reason = "목적지 도착 완료";
+                    string contextDetail = $"방금 목적지 [{completedLocation}]에 무사히 도착했습니다. 오늘 남은 시간(현재 {currentHour}시) 동안 이 근방에서 새로 수행할 행동을 계획해 주세요.";
+                    
+                    var newJobPayload = await TriggerDynamicReflectionAsync(agent, reason, contextDetail, request.CurrentTick);
+                    if (newJobPayload != null)
+                    {
+                        response.NewJob = newJobPayload;
+                        response.Message = $"목적지 도착 완료에 따라 새 Job {newJobPayload.JobId}가 즉시 발급되었습니다.";
+
+                        // 3. 오늘 남은 시간(currentHour + 1 ~ 23) 동안의 스케줄 항목 추가
+                        int nextHour = currentHour + 1;
+                        if (nextHour < 24 && agent.CurrentSchedule != null)
+                        {
+                            agent.CurrentSchedule.Add(new DailyScheduleItem
+                            {
+                                StartHour = nextHour,
+                                EndHour = 23,
+                                TargetLocation = newJobPayload.TargetLocation.Name,
+                                Activity = newJobPayload.Intent
+                            });
+                        }
+
+                        // LiteDB 저장
+                        _persistenceService.UpsertAgent(agent);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[Error] 도착 재성찰 오류: {ex.Message}");
+                }
             }
         }
         else if (request.Status == ReportJobStatusRequest.Types.JobStatus.Failed)

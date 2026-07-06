@@ -26,6 +26,7 @@ public class DailyPlanService : IDailyPlanService, IDisposable
     private readonly IGeminiApiService _apiService;
     private readonly Func<ConcurrentDictionary<string, AgentInstance>> _agentsAccessor;
     private readonly IPersistenceService _persistenceService;
+    private readonly LlmResponseLogger _llmResponseLogger;
 
     // 🆕 비동기 스케줄 큐 및 워커를 위한 동기화 객체들
     private readonly object _queueLock = new();
@@ -39,11 +40,13 @@ public class DailyPlanService : IDailyPlanService, IDisposable
     public DailyPlanService(
         IGeminiApiService apiService,
         Func<ConcurrentDictionary<string, AgentInstance>> agentsAccessor,
-        IPersistenceService persistenceService)
+        IPersistenceService persistenceService,
+        LlmResponseLogger llmResponseLogger)
     {
         _apiService = apiService;
         _agentsAccessor = agentsAccessor;
         _persistenceService = persistenceService;
+        _llmResponseLogger = llmResponseLogger;
 
         // 큐 워커 백그라운드 태스크 시작
         _workerTokenSource = new CancellationTokenSource();
@@ -161,15 +164,46 @@ public class DailyPlanService : IDailyPlanService, IDisposable
         {
             try
             {
-                Console.WriteLine($"🧠 [Queue Worker] 에이전트 '{agent.Persona.Name}' 성찰 및 다음 일정 계산 시작...");
+                // 0. 원정 중 오토런(Auto-Continue) 스케줄 계산 및 LLM 우회 검사
+                List<DailyScheduleItem> schedule;
+                string? lastScheduledTarget = agent.CurrentSchedule?.LastOrDefault()?.TargetLocation;
+                int hoursRemaining = 0;
 
-                // 1. 자아성찰 수행
-                await ReflectOnEpisodesAsync(agent, cancellationToken);
+                if (!string.IsNullOrEmpty(lastScheduledTarget))
+                {
+                    string currentLocParsed = LocationCoordinateRegistry.ParseLocation(agent.Status.CurrentLocation);
+                    string targetLocParsed = LocationCoordinateRegistry.ParseLocation(lastScheduledTarget);
+                    if (string.Equals(currentLocParsed, targetLocParsed, StringComparison.OrdinalIgnoreCase))
+                    {
+                        hoursRemaining = 0;
+                    }
+                    else
+                    {
+                        hoursRemaining = LocationCoordinateRegistry.GetTravelTimeHoursFromCoord(agent.Status.X, agent.Status.Y, agent.Status.Z, lastScheduledTarget);
+                    }
+                }
 
-                // 2. 내일의 Daily Plan 생성
-                var schedule = await GenerateDailyPlanAsync(agent, cancellationToken);
+                if (hoursRemaining > 0)
+                {
+                    Console.WriteLine($"🚗 [Auto-Continue] 에이전트 '{agent.Persona.Name}'가 아직 목적지 '{lastScheduledTarget}'에 도착하지 못했습니다 (남은 예상 시간: {hoursRemaining}시간). LLM 호출 없이 원정 일정을 자동 연장합니다.");
+                    schedule = new List<DailyScheduleItem>
+                    {
+                        new DailyScheduleItem
+                        {
+                            StartHour = 0,
+                            EndHour = 23,
+                            TargetLocation = lastScheduledTarget!,
+                            Activity = $"{lastScheduledTarget}(으)로 이동"
+                        }
+                    };
+                }
+                else
+                {
+                    // 1. 성찰 및 다음 일정 통합 계획 생성 (Single-Shot)
+                    schedule = await GenerateReflectedDailyPlanAsync(agent, cancellationToken);
+                }
 
-                // 3. 예비 버퍼(NextSchedule)에 보관
+                // 2. 예비 버퍼(NextSchedule)에 보관
                 agent.NextSchedule = schedule;
 
                 // DB 저장
@@ -252,118 +286,22 @@ public class DailyPlanService : IDailyPlanService, IDisposable
         _concurrencySemaphore.Dispose();
     }
 
-    private async Task ReflectOnEpisodesAsync(AgentInstance agent, CancellationToken cancellationToken)
+    private async Task<List<DailyScheduleItem>> GenerateReflectedDailyPlanAsync(AgentInstance agent, CancellationToken cancellationToken)
     {
         // 오늘 획득한 목격담 및 대화 사건 필터링
         var todayWitnessed = agent.MemoryBox.Beliefs.Values
             .Where(b => b.Type == BeliefType.Witnessed && (DateTime.UtcNow - b.AcquiredAt).TotalDays <= 1.0)
             .ToList();
 
-        if (todayWitnessed.Count == 0)
-        {
-            Console.WriteLine($"[Reflection] 에이전트 '{agent.Persona.Name}'는 오늘 특별한 사건(대화)이 없어 일상 요약 성찰을 진행합니다.");
-            return;
-        }
-
-        string episodesList = string.Join("\n", todayWitnessed.Select(b => $"- [{b.AcquiredAt:HH:mm}] 사건내용: {b.Content}"));
+        string episodesList = todayWitnessed.Any()
+            ? string.Join("\n", todayWitnessed.Select(b => $"- [{b.AcquiredAt:HH:mm}] 사건내용: {b.Content}"))
+            : "오늘 특별한 사건이나 대화가 관찰되지 않았습니다.";
 
         // 기존 인상 목록 추출
         var existingImpressions = string.Join("\n", agent.RelationshipMap.Values
             .Where(r => !string.IsNullOrEmpty(r.ImpressionSummary))
             .Select(r => $"- {r.TargetAgentId}: \"{r.ImpressionSummary}\""));
 
-        string prompt = $$"""
-<role>가상 세계 NPC [{{agent.Persona.Name}}]의 자아성찰(Reflection) 시스템</role>
-<task>오늘 하루 동안 겪은 에피소드들을 분석하여, 캐릭터의 장기 기억(CoreFact)을 추출하고 상대방에 대한 인상(Impression)을 업데이트하십시오.</task>
-
-<rules>
-1. 오늘 겪은 단기 에피소드들을 종합하여 NPC가 깊이 깨닫거나 가치관에 반영할 장기 기억을 1~2개 도출하십시오.
-2. 만약 오늘 대화 상대방(Target Agent)과 관련된 사건을 겪었다면, 그에 대한 전반적 인상(Impression Summary)을 업데이트하여 주십시오. 
-   - 기존의 인상이 있었다면 이를 완전히 덮어씌우지 말고, 오늘 겪은 일을 누적 반영하여 결합/수정(Append/Revise)된 형태로 작성해야 합니다.
-3. 오직 아래 지정된 JSON 포맷의 데이터만 출력하십시오.
-</rules>
-
-<context>
-[NPC 페르소나]
-- 이름/직업: {{agent.Persona.Name}} / {{agent.Persona.Job}}
-- 성격/말투: {{agent.Persona.ToneStyle}}
-- 배경 이야기: {{agent.Persona.Backstory}}
-- 핵심 가치관: {{agent.Persona.CoreValues}}
-
-[기존 대상별 관계 인상]
-{{existingImpressions}}
-
-[오늘 하루 동안 겪은 에피소드]
-{{episodesList}}
-</context>
-
-<output_format>
-반드시 아래 JSON 스키마를 충실히 준수하는 순수 JSON만 반환하십시오.
-{
-  "core_facts": [
-    {
-      "content": "장기 기억 내용 (예: Eva가 나에게 거짓말을 했다는 사실을 알았고, 그녀를 더 이상 신뢰할 수 없다)",
-      "importance": 8
-    }
-  ],
-  "relationship_updates": [
-    {
-      "target_agent_id": "npc_eva",
-      "new_impression": "나에게 거짓말을 하는 등 최근 들어 영 미덥지 못해 경계 중임"
-    }
-  ]
-}
-</output_format>
-""";
-
-        var request = new GeminiRequest(
-            SystemInstruction: new Content("system", new List<Part> { new Part(prompt) }),
-            Contents: new List<Content> { new Content("user", new List<Part> { new Part("성찰 시작.") }) },
-            GenerationConfig: new GenerationConfig(null, 4000, "application/json", null, new ThinkingConfig(ThinkingLevel.minimal))
-        );
-
-        string responseJson = await _apiService.SendMessageAsync(request, ModelTier.FlashLite, cancellationToken);
-        var reflectionResult = LlmJsonParser.DeserializeSafe<ReflectionResponse>(responseJson);
-
-        if (reflectionResult?.ReflectionInsights != null)
-        {
-            foreach (var insight in reflectionResult.ReflectionInsights)
-            {
-                if (string.IsNullOrWhiteSpace(insight.Content)) continue;
-
-                // 새로운 깨달음을 Witnessed 타입의 Belief로 통합 저장 (성찰 기억)
-                var reflectionBelief = new Belief
-                {
-                    BeliefId = $"belief_reflection_{Guid.NewGuid().ToString().Substring(0, 5)}",
-                    SubjectId = agent.AgentId,
-                    Content = insight.Content,
-                    Type = BeliefType.Witnessed,
-                    Confidence = Math.Clamp(insight.Importance / 10.0, 0.1, 1.0),
-                    Salience = 1.0,
-                    EmotionalCharge = Math.Clamp((insight.Importance / 10.0) * 0.5, 0.0, 1.0),
-                    AcquiredAt = DateTime.UtcNow
-                };
-
-                agent.MemoryBox.AddOrUpdateBelief(reflectionBelief);
-                Console.WriteLine($"🧠 [Memory Reflection] {agent.Persona.Name}에게 성찰 기억 추가: \"{insight.Content}\" (중요도: {insight.Importance})");
-            }
-        }
-
-        if (reflectionResult?.RelationshipUpdates != null)
-        {
-            foreach (var relUpdate in reflectionResult.RelationshipUpdates)
-            {
-                if (string.IsNullOrWhiteSpace(relUpdate.TargetAgentId) || string.IsNullOrWhiteSpace(relUpdate.NewImpression)) continue;
-
-                var rel = agent.RelationshipMap.GetOrAdd(relUpdate.TargetAgentId, id => new Relationship { TargetAgentId = id });
-                rel.ImpressionSummary = relUpdate.NewImpression;
-                Console.WriteLine($"👥 [Relationship Reflection] {agent.Persona.Name}이(가) {relUpdate.TargetAgentId}에 대한 인상을 갱신했습니다: \"{relUpdate.NewImpression}\"");
-            }
-        }
-    }
-
-    private async Task<List<DailyScheduleItem>> GenerateDailyPlanAsync(AgentInstance agent, CancellationToken cancellationToken)
-    {
         // 중요도 순 Top-10 믿음 목록 추출
         var sortedBeliefs = agent.MemoryBox.Beliefs.Values
             .OrderByDescending(b => b.Importance)
@@ -374,30 +312,71 @@ public class DailyPlanService : IDailyPlanService, IDisposable
             ? string.Join("\n", sortedBeliefs.Select(b => $"- {b.Content} (중요도: {b.Importance:F2} - {PromptFormattingHelpers.GetImportanceLabel(b.Importance)})"))
             : "마음에 간직하고 있는 특별한 장기 기억이 없습니다.";
 
-        string locationList = LocationCoordinateRegistry.GetPromptLocationList();
+        // 요원의 현재 물리적 위치 좌표를 기반으로 LOD 마트료시카 위치 목록을 가져옴
+        float ax = agent.Status.X;
+        float az = agent.Status.Z;
+        var lodLocations = LocationCoordinateRegistry.GetLodLocationList(ax, az);
+
+        // 현재 위치하고 있는 장소명이 LOD 리스트에 명시적으로 없으면 추가
+        string parsedCurrent = LocationCoordinateRegistry.ParseLocation(agent.Status.CurrentLocation);
+        if (!lodLocations.Contains(parsedCurrent, StringComparer.OrdinalIgnoreCase))
+        {
+            lodLocations.Insert(0, parsedCurrent);
+        }
+
+        string locationList = string.Join("\n", lodLocations.Select(name => $"- {name}"));
+
+        // LOD 장소 간 이동 소요 시간 매트릭스 구성
+        var travelMatrixLines = new List<string>();
+        for (int i = 0; i < lodLocations.Count; i++)
+        {
+            for (int j = i + 1; j < lodLocations.Count; j++)
+            {
+                int travelTime = LocationCoordinateRegistry.GetTravelTimeHours(lodLocations[i], lodLocations[j]);
+                travelMatrixLines.Add($"- {lodLocations[i]} <-> {lodLocations[j]}: {travelTime}시간 소요");
+            }
+        }
+        string travelMatrixText = string.Join("\n", travelMatrixLines);
 
         string prompt = $$"""
-<role>NPC [{{agent.Persona.Name}}]의 하루 계획(Daily Schedule) 수립 시스템</role>
-<task>NPC의 페르소나, 현재 상태, 관계도, 장기 기억을 고려하여 내일 하루(0시~23시) 동안의 구체적인 일정을 짜주십시오.</task>
+<role>가상 세계 NPC [{{agent.Persona.Name}}]의 자아성찰 및 하루 계획(Daily Schedule) 수립 시스템</role>
+<task>오늘 하루 겪은 에피소드들을 분석하여 장기 기억과 당면 동기(Current Drive)를 갱신하고, 그 갱신된 동기를 즉각 반영하여 내일 하루(0시~23시) 동안의 구체적인 일정을 연이어 짜주십시오.</task>
 
 <rules>
-1. 0시부터 23시까지의 일정이 빈 틈 없이 연속적이어야 합니다. (예: 0~7, 7~10, 10~15, 15~18, 18~22, 22~23)
-2. NPC의 직업과 소속 진영(기억 및 신념 참고), 대화 상대들과의 관계를 일정에 자연스럽게 녹여내십시오. 
-3. 목표 장소(target_location)는 반드시 [이동 가능한 장소 목록] 중 하나여야 합니다. (정확히 일치 필수)
-4. 24시간 계획을 3~6개의 시간대로 나누어 짜주십시오. 시작 시간과 종료 시간은 반드시 정수(0~23)여야 합니다.
-5. 각 일정은 시작 시간, 종료 시간, 목표 장소, 해당 장소에서 할 구체적인 행동(activity)을 포함해야 합니다.
-6. 오직 아래 지정된 JSON 포맷의 데이터만 출력하십시오.
+[1부: 자아 성찰 (Reflection)]
+1. 오늘 겪은 단기 에피소드들을 종합하여 NPC가 깊이 깨닫거나 가치관에 반영할 장기 기억을 1~2개 도출하십시오.
+2. 만약 오늘 대화 상대방(Target Agent)과 관련된 사건을 겪었다면, 그에 대한 전반적 인상(Impression Summary)을 업데이트하여 주십시오. 
+   - 기존의 인상이 있었다면 이를 완전히 덮어씌우지 말고, 오늘 겪은 일을 누적 반영하여 결합/수정(Append/Revise)된 형태로 작성해야 합니다.
+3. 당신의 궁극적인 장기 목표는 [{{agent.Persona.LongTermGoal}}]입니다. 오늘 하루 동안의 경험과 이 장기 목표를 고려하여, 내일 하루 동안 NPC가 최우선으로 추구해야 할 당면 동기(current_drive)를 구체적으로 수립하십시오.
+
+[2부: 일정 수립 (Scheduling)]
+4. 0시부터 23시까지의 일정이 빈 틈 없이 연속적이어야 합니다. (예: 0~7, 7~10, 10~15, 15~18, 18~22, 22~23)
+5. NPC의 직업과 소속 진영(기억 및 신념 참고), 대화 상대들과의 관계를 일정에 자연스럽게 녹여내십시오. 
+6. 목표 장소(target_location)는 반드시 [이동 가능한 장소 목록] 중 하나여야 합니다. (정확히 일치 필수)
+   - 먼 지역(국가/도시)이 목록에 있을 때, 그 지역으로 여행/이동하고 싶다면 목록에 나온 국가명이나 도시명을 목표 장소로 그대로 사용해 주십시오. (예: "아르카디아 제국", "왕국 수도")
+7. 24시간 계획을 3~6개의 시간대로 나누어 짜주십시오. 시작 시간과 종료 시간은 반드시 정수(0~23)여야 합니다.
+8. 각 일정은 시작 시간, 종료 시간, 목표 장소, 해당 장소에서 할 구체적인 행동(activity)을 포함해야 합니다.
+9. [중요] 다른 장소로 이동할 경우, 이동 소요 시간을 감안하여 일정을 계획하십시오. (이동 시간은 C# 시스템단에서 자동으로 정밀 보정됩니다)
+10. [목표 의식 주입] 방금 1부에서 스스로 수립한 당면 동기(current_drive)를 실현하기 위한 적극적 행동(예: 정보원 만나기, 비밀 조사, 대화 시도 등)을 하루 일정 중 최소 한 타임 이상 반드시 일정에 반영하십시오.
+
+[3부: 출력 형식]
+11. 오직 아래 지정된 JSON 포맷의 데이터만 출력하십시오. 다른 텍스트 설명이나 주석은 절대 포함하지 마십시오.
 </rules>
 
 <context>
 [이동 가능한 장소 목록]
 {{locationList}}
 
+[장소 간 이동 소요 시간]
+{{travelMatrixText}}
+
 [NPC 페르소나]
 - 이름/직업: {{agent.Persona.Name}} / {{agent.Persona.Job}}
-- 성격: {{agent.Persona.ToneStyle}}
+- 성격/말투: {{agent.Persona.ToneStyle}}
 - 배경 이야기: {{agent.Persona.Backstory}}
 - 핵심 가치관: {{agent.Persona.CoreValues}}
+- 장기 목표: {{agent.Persona.LongTermGoal}}
+- 현재 당면 동기: {{agent.Persona.CurrentDrive}}
 
 [현재 감정 및 상태]
 - 감정: {{agent.Status.Emotion}}
@@ -405,12 +384,33 @@ public class DailyPlanService : IDailyPlanService, IDisposable
 
 [기억하는 장기 기억들]
 {{coreMemoriesList}}
+
+[기존 대상별 관계 인상]
+{{existingImpressions}}
+
+[오늘 하루 동안 겪은 에피소드]
+{{episodesList}}
 </context>
 
 <output_format>
-반드시 아래 JSON 형식으로만 대답하십시오.
+반드시 아래 JSON 형식으로만 대답하십시오. 다른 텍스트 설명이나 주석은 절대 포함하지 마십시오.
 {
-  "schedules": [
+  "reflection": {
+    "core_facts": [
+      {
+        "content": "장기 기억 내용 (예: Eva가 나에게 거짓말을 했다는 사실을 알았고, 그녀를 더 이상 신뢰할 수 없다)",
+        "importance": 8
+      }
+    ],
+    "relationship_updates": [
+      {
+        "target_agent_id": "npc_eva",
+        "new_impression": "나에게 거짓말을 하는 등 최근 들어 영 미덥지 못해 경계 중임"
+      }
+    ],
+    "current_drive": "내일 하루 동안 우선적으로 달성하고자 하는 단기적이고 구체적인 행동 동기"
+  },
+  "daily_schedule": [
     {
       "start_hour": 0,
       "end_hour": 7,
@@ -424,21 +424,74 @@ public class DailyPlanService : IDailyPlanService, IDisposable
 
         var request = new GeminiRequest(
             SystemInstruction: new Content("system", new List<Part> { new Part(prompt) }),
-            Contents: new List<Content> { new Content("user", new List<Part> { new Part("하루 일정 계획 생성 시작.") }) },
+            Contents: new List<Content> { new Content("user", new List<Part> { new Part("성찰 및 일정 계획 생성 시작.") }) },
             GenerationConfig: new GenerationConfig(null, 8192, "application/json", null, new ThinkingConfig(ThinkingLevel.low))
         );
 
         string responseJson = await _apiService.SendMessageAsync(request, ModelTier.Flash35, cancellationToken);
-        var scheduleResult = LlmJsonParser.DeserializeSafe<ScheduleResponse>(responseJson);
 
-        if (scheduleResult?.Schedules != null && scheduleResult.Schedules.Count > 0)
+        // 🆕 디버그용 LLM 응답 저장
+        await _llmResponseLogger.LogResponseAsync(agent.AgentId, "ReflectedSchedule", responseJson);
+
+        var result = LlmJsonParser.DeserializeSafe<ReflectedScheduleResponse>(responseJson);
+        if (result == null)
+        {
+            throw new Exception("LLM 합병 결과가 비어 있거나 올바른 포맷이 아닙니다.");
+        }
+
+        // --- 1부: 성찰 결과 처리 ---
+        var reflection = result.Reflection;
+        if (reflection != null)
+        {
+            if (reflection.ReflectionInsights != null)
+            {
+                foreach (var insight in reflection.ReflectionInsights)
+                {
+                    if (string.IsNullOrWhiteSpace(insight.Content)) continue;
+
+                    var reflectionBelief = new Belief
+                    {
+                        BeliefId = $"belief_reflection_{Guid.NewGuid().ToString().Substring(0, 5)}",
+                        SubjectId = agent.AgentId,
+                        Content = insight.Content,
+                        Type = BeliefType.Witnessed,
+                        Confidence = Math.Clamp(insight.Importance / 10.0, 0.1, 1.0),
+                        Salience = 1.0,
+                        EmotionalCharge = Math.Clamp((insight.Importance / 10.0) * 0.5, 0.0, 1.0),
+                        AcquiredAt = DateTime.UtcNow
+                    };
+
+                    agent.MemoryBox.AddOrUpdateBelief(reflectionBelief);
+                    Console.WriteLine($"🧠 [Memory Reflection] {agent.Persona.Name}에게 성찰 기억 추가: \"{insight.Content}\" (중요도: {insight.Importance})");
+                }
+            }
+
+            if (reflection.RelationshipUpdates != null)
+            {
+                foreach (var relUpdate in reflection.RelationshipUpdates)
+                {
+                    if (string.IsNullOrWhiteSpace(relUpdate.TargetAgentId) || string.IsNullOrWhiteSpace(relUpdate.NewImpression)) continue;
+
+                    var rel = agent.RelationshipMap.GetOrAdd(relUpdate.TargetAgentId, id => new Relationship { TargetAgentId = id });
+                    rel.ImpressionSummary = relUpdate.NewImpression;
+                    Console.WriteLine($"👥 [Relationship Reflection] {agent.Persona.Name}이(가) {relUpdate.TargetAgentId}에 대한 인상을 갱신했습니다: \"{relUpdate.NewImpression}\"");
+                }
+            }
+
+            if (!string.IsNullOrWhiteSpace(reflection.CurrentDrive))
+            {
+                agent.Persona.CurrentDrive = reflection.CurrentDrive;
+                Console.WriteLine($"🎯 [Drive Reflection] {agent.Persona.Name}이(가) 당면 동기를 갱신했습니다: \"{reflection.CurrentDrive}\"");
+            }
+        }
+
+        // --- 2부: 일정 수립 결과 처리 ---
+        if (result.DailySchedule != null && result.DailySchedule.Count > 0)
         {
             var list = new List<DailyScheduleItem>();
-            foreach (var item in scheduleResult.Schedules)
+            foreach (var item in result.DailySchedule)
             {
-                // 위치 보정
                 string correctedLocation = MapToValidLocation(item.TargetLocation);
-                
                 list.Add(new DailyScheduleItem
                 {
                     StartHour = item.StartHour,
@@ -447,10 +500,115 @@ public class DailyPlanService : IDailyPlanService, IDisposable
                     Activity = item.Activity
                 });
             }
-            return list;
+
+            // 물리적 이동 시간 사후 검열 및 자동 보정
+            var correctedList = PostProcessSchedule(list, agent.Status.CurrentLocation);
+            return correctedList;
         }
 
         throw new Exception("LLM 일정 파싱 오류 또는 결과가 비어 있습니다.");
+    }
+
+    private List<DailyScheduleItem> PostProcessSchedule(List<DailyScheduleItem> rawSchedules, string currentAgentLocation)
+    {
+        if (rawSchedules == null || rawSchedules.Count == 0) return rawSchedules ?? new List<DailyScheduleItem>();
+
+        // 1. 24시간 배열 초기화
+        string[] targetLocations = new string[24];
+        string[] activities = new string[24];
+
+        // 기본값 채우기 (현재 위치 혹은 술집으로 채움)
+        string fallbackLoc = !string.IsNullOrWhiteSpace(currentAgentLocation) 
+            ? LocationCoordinateRegistry.ParseLocation(currentAgentLocation) 
+            : "술집 (Tavern)";
+        for (int i = 0; i < 24; i++)
+        {
+            targetLocations[i] = fallbackLoc;
+            activities[i] = "대기";
+        }
+
+        // LLM이 반환한 일정을 시간 슬롯에 매핑
+        foreach (var item in rawSchedules)
+        {
+            int start = Math.Clamp(item.StartHour, 0, 23);
+            int end = Math.Clamp(item.EndHour, 0, 23);
+            if (start > end) continue;
+
+            string loc = LocationCoordinateRegistry.ParseLocation(item.TargetLocation);
+            for (int h = start; h <= end; h++)
+            {
+                targetLocations[h] = loc;
+                activities[h] = item.Activity;
+            }
+        }
+
+        // 2. 이동 시간 보정 (사후 검열)
+        string[] finalLocations = (string[])targetLocations.Clone();
+        string[] finalActivities = (string[])activities.Clone();
+
+        string previousDayEndLocation = !string.IsNullOrWhiteSpace(currentAgentLocation)
+            ? LocationCoordinateRegistry.ParseLocation(currentAgentLocation)
+            : fallbackLoc;
+
+        for (int h = 0; h < 24; h++)
+        {
+            string locA = (h == 0) ? previousDayEndLocation : targetLocations[h - 1];
+            string locB = targetLocations[h];
+
+            if (locA != locB)
+            {
+                int T = LocationCoordinateRegistry.GetTravelTimeHours(locA, locB);
+                if (T > 0)
+                {
+                    if (h == 0)
+                    {
+                        // 0시에 시작하는 위치 전이의 경우, 새 날의 시작 부분(0 ~ T-1)을 이동 시간으로 채움
+                        for (int fill = 0; fill < T; fill++)
+                        {
+                            if (fill < 24)
+                            {
+                                finalLocations[fill] = locB;
+                                finalActivities[fill] = $"{locB}(으)로 이동";
+                            }
+                        }
+                    }
+                    else
+                    {
+                        // h시에 시작하는 위치 전이의 경우, 전 시간대(h - T ~ h - 1)를 이동 시간으로 채움
+                        for (int fill = h - T; fill < h; fill++)
+                        {
+                            if (fill >= 0)
+                            {
+                                finalLocations[fill] = locB;
+                                finalActivities[fill] = $"{locB}(으)로 이동";
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 3. 연속된 동일 활동 그룹화하여 다시 DailyScheduleItem 리스트로 변환
+        var correctedSchedules = new List<DailyScheduleItem>();
+        int groupStart = 0;
+        for (int h = 1; h <= 24; h++)
+        {
+            if (h == 24 || 
+                finalLocations[h] != finalLocations[groupStart] || 
+                finalActivities[h] != finalActivities[groupStart])
+            {
+                correctedSchedules.Add(new DailyScheduleItem
+                {
+                    StartHour = groupStart,
+                    EndHour = h - 1,
+                    TargetLocation = finalLocations[groupStart],
+                    Activity = finalActivities[groupStart]
+                });
+                groupStart = h;
+            }
+        }
+
+        return correctedSchedules;
     }
 
     private string MapToValidLocation(string rawLocation)
@@ -483,9 +641,15 @@ public class DailyPlanService : IDailyPlanService, IDisposable
 }
 
 // JSON 역직렬화용 DTO 레코드들
+public record ReflectedScheduleResponse(
+    [property: JsonPropertyName("reflection")] ReflectionResponse Reflection,
+    [property: JsonPropertyName("daily_schedule")] List<ScheduleItemDto> DailySchedule
+);
+
 public record ReflectionResponse(
     [property: JsonPropertyName("core_facts")] List<ReflectionInsightDto> ReflectionInsights,
-    [property: JsonPropertyName("relationship_updates")] List<RelationshipUpdateDto>? RelationshipUpdates
+    [property: JsonPropertyName("relationship_updates")] List<RelationshipUpdateDto>? RelationshipUpdates,
+    [property: JsonPropertyName("current_drive")] string? CurrentDrive
 );
 
 public record ReflectionInsightDto(
@@ -498,13 +662,10 @@ public record RelationshipUpdateDto(
     [property: JsonPropertyName("new_impression")] string NewImpression
 );
 
-public record ScheduleResponse(
-    [property: JsonPropertyName("schedules")] List<ScheduleItemDto> Schedules
-);
-
 public record ScheduleItemDto(
     [property: JsonPropertyName("start_hour")] int StartHour,
     [property: JsonPropertyName("end_hour")] int EndHour,
     [property: JsonPropertyName("target_location")] string TargetLocation,
     [property: JsonPropertyName("activity")] string Activity
 );
+

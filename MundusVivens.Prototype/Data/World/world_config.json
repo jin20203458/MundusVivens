@@ -2,7 +2,38 @@
   "_Comment": "⚠️ [IMPORTANT] Day 2 이후의 API 폭주 방지(Staggering)를 위해, NPC들의 첫날(Day 1) 일과 종료 시각(Plan End Time)은 반드시 서로 다른 시각(예: NPC 1은 14:00, NPC 2는 18:00, NPC 3은 22:00)으로 시차를 두어 작성해야 합니다.",
   "Locations": [
     {
+      "SemanticName": "발레리아 왕국",
+      "Type": "Country",
+      "MinBounds": { "X": -100.0, "Y": -50.0, "Z": -100.0 },
+      "MaxBounds": { "X": 500.0, "Y": 100.0, "Z": 500.0 }
+    },
+    {
+      "SemanticName": "아르카디아 제국",
+      "Type": "Country",
+      "MinBounds": { "X": 1000.0, "Y": -50.0, "Z": 1000.0 },
+      "MaxBounds": { "X": 2000.0, "Y": 100.0, "Z": 2000.0 }
+    },
+    {
+      "SemanticName": "루미스 마을",
+      "Type": "City",
+      "MinBounds": { "X": 10.0, "Y": -10.0, "Z": 30.0 },
+      "MaxBounds": { "X": 60.0, "Y": 10.0, "Z": 90.0 }
+    },
+    {
+      "SemanticName": "왕국 수도",
+      "Type": "City",
+      "MinBounds": { "X": 200.0, "Y": -10.0, "Z": 200.0 },
+      "MaxBounds": { "X": 400.0, "Y": 10.0, "Z": 400.0 }
+    },
+    {
+      "SemanticName": "제국 수도",
+      "Type": "City",
+      "MinBounds": { "X": 1200.0, "Y": -10.0, "Z": 1200.0 },
+      "MaxBounds": { "X": 1500.0, "Y": 10.0, "Z": 1500.0 }
+    },
+    {
       "SemanticName": "성당 (Church)",
+      "Type": "Place",
       "Aliases": ["성당", "church"],
       "Coordinates": { "X": 20.0, "Y": 0.0, "Z": 80.0 },
       "Furniture": [
@@ -13,6 +44,7 @@
     },
     {
       "SemanticName": "광장 (Square)",
+      "Type": "Place",
       "Aliases": ["광장", "마을 광장", "square"],
       "Coordinates": { "X": 50.0, "Y": 0.0, "Z": 50.0 },
       "Furniture": [
@@ -22,6 +54,7 @@
     },
     {
       "SemanticName": "뒷골목 (Back Alley)",
+      "Type": "Place",
       "Aliases": ["뒷골목", "골목", "back alley", "alley"],
       "Coordinates": { "X": 15.0, "Y": 0.0, "Z": 50.0 },
       "Furniture": [
@@ -31,6 +64,7 @@
     },
     {
       "SemanticName": "술집 (Tavern)",
+      "Type": "Place",
       "Aliases": ["술집", "주점", "tavern"],
       "Coordinates": { "X": 30.0, "Y": 0.0, "Z": 40.0 },
       "Furniture": [
@@ -39,6 +73,20 @@
         { "Name": "술집 나무의자 A1", "Type": "Sit", "Offset": { "X": -3.0, "Y": 0.0, "Z": -3.0 } },
         { "Name": "술집 나무의자 A2", "Type": "Sit", "Offset": { "X": -2.0, "Y": 0.0, "Z": -3.0 } }
       ]
+    },
+    {
+      "SemanticName": "왕국 궁전",
+      "Type": "Place",
+      "Aliases": ["왕국 궁전", "궁전", "palace"],
+      "Coordinates": { "X": 300.0, "Y": 0.0, "Z": 300.0 },
+      "Furniture": []
+    },
+    {
+      "SemanticName": "제국 광장",
+      "Type": "Place",
+      "Aliases": ["제국 광장", "제국광장"],
+      "Coordinates": { "X": 1350.0, "Y": 0.0, "Z": 1350.0 },
+      "Furniture": []
     }
   ],
   "Agents": [
@@ -51,7 +99,9 @@
         "Backstory": "마을 술집을 운영하는 사교적인 여성. 소문의 중심지.",
         "CoreValues": "유쾌한 소통, 정보 수집",
         "Extroversion": 0.9,
-        "Faction": "마을 주민"
+        "Faction": "마을 주민",
+        "LongTermGoal": "마을에서 가장 정보가 빠르고 영향력 있는 인물이 되어, 언젠가 대도시의 고급 정보 길드를 여는 것.",
+        "CurrentDrive": "사제 카일과 암시장 정보원 발락 사이의 긴장 관계에 대한 확실한 비밀 소문을 수집하고 정리하는 것."
       },
       "Status": {
         "CurrentLocation": "술집 (Tavern)",
@@ -75,7 +125,9 @@
         "Backstory": "성당의 사제로, 과거 성수 절도의 비밀을 안고 있다.",
         "CoreValues": "경건함, 질서, 속죄",
         "Extroversion": 0.3,
-        "Faction": "성당"
+        "Faction": "성당",
+        "LongTermGoal": "성당에서 잃어버린 신뢰를 회복하고, 과거 성수 절도죄에 대해 진정으로 참회하고 속죄하는 것.",
+        "CurrentDrive": "발락의 위협이나 약점 잡기에서 벗어나기 위해, 그의 약점을 알아내거나 진심으로 속죄할 기회를 찾는 것."
       },
       "Status": {
         "CurrentLocation": "성당 (Church)",
@@ -105,7 +157,9 @@
         "Backstory": "뒷골목 암시장의 정보원. 카일의 과거 범죄를 알고 있다.",
         "CoreValues": "이익, 비밀 거래, 지배력",
         "Extroversion": 0.4,
-        "Faction": "그림자 길드"
+        "Faction": "그림자 길드",
+        "LongTermGoal": "그림자 길드에서 입지를 굳혀 이 마을 암시장의 절대적인 지배자가 되는 것.",
+        "CurrentDrive": "사제 카일을 계속 압박하여 성당의 중요한 물품이나 기밀 정보를 빼돌리게 만드는 것."
       },
       "Status": {
         "CurrentLocation": "뒷골목 (Back Alley)",
@@ -124,6 +178,38 @@
         { "StartHour": 0, "EndHour": 9, "TargetLocation": "뒷골목 (Back Alley)", "Activity": "취침 및 정비" },
         { "StartHour": 9, "EndHour": 15, "TargetLocation": "술집 (Tavern)", "Activity": "정보 수집 및 술마시기" },
         { "StartHour": 15, "EndHour": 20, "TargetLocation": "뒷골목 (Back Alley)", "Activity": "길드 장부 검토" }
+      ]
+    },
+    {
+      "AgentId": "npc_marco",
+      "Persona": {
+        "Name": "마르코",
+        "Job": "원정 상인",
+        "ToneStyle": "쾌활하고 흥정을 좋아하는 장사꾼 말투, 세상 모든 곳을 돌아다닌 경험을 자랑함",
+        "Backstory": "발레리아 왕국과 아르카디아 제국을 오가며 귀중한 무역품을 거래하는 베테랑 원정 상인입니다.",
+        "CoreValues": "이윤 추구, 신용 우선, 개척 정신",
+        "Extroversion": 0.85,
+        "Faction": "상인 연합",
+        "LongTermGoal": "왕국과 제국을 연결하는 독점적인 안전 무역로를 개척하여 대상단의 단장이 되는 것.",
+        "CurrentDrive": "발레리아 왕국의 특산물을 가지고 아르카디아 제국으로 건너가 제국의 마법 보석과 비단을 대량으로 흥정해 오는 것."
+      },
+      "Status": {
+        "CurrentLocation": "광장 (Square)",
+        "Emotion": "설렘",
+        "Activity": "마차 정비 및 짐 점검"
+      },
+      "MemoryBox": {
+        "CoreMemories": [
+          {
+            "Content": "아르카디아 제국의 제국 수도에는 귀중한 마법 비단이 저렴하게 유통된다는 사실을 알고 있음",
+            "Importance": 8
+          }
+        ]
+      },
+      "InitialSchedule": [
+        { "StartHour": 0, "EndHour": 8, "TargetLocation": "광장 (Square)", "Activity": "마차에서 노숙 및 취침" },
+        { "StartHour": 8, "EndHour": 12, "TargetLocation": "광장 (Square)", "Activity": "원정 가판대 무역 홍보" },
+        { "StartHour": 12, "EndHour": 18, "TargetLocation": "아르카디아 제국", "Activity": "아르카디아 제국(으)로의 대원정 이동 시작" }
       ]
     },
     {
@@ -156,7 +242,10 @@
     { "SourceAgentId": "npc_valac", "TargetAgentId": "npc_kyle", "Liking": 10, "Trust": 40 },
     { "SourceAgentId": "npc_eva", "TargetAgentId": "player", "Liking": 15, "Trust": 50 },
     { "SourceAgentId": "npc_kyle", "TargetAgentId": "player", "Liking": 0, "Trust": 50 },
-    { "SourceAgentId": "npc_valac", "TargetAgentId": "player", "Liking": -5, "Trust": 30 }
+    { "SourceAgentId": "npc_valac", "TargetAgentId": "player", "Liking": -5, "Trust": 30 },
+    { "SourceAgentId": "npc_marco", "TargetAgentId": "npc_eva", "Liking": 20, "Trust": 50 },
+    { "SourceAgentId": "npc_eva", "TargetAgentId": "npc_marco", "Liking": 20, "Trust": 45 },
+    { "SourceAgentId": "npc_marco", "TargetAgentId": "player", "Liking": 10, "Trust": 50 }
   ],
   "SeedGossips": [
     {

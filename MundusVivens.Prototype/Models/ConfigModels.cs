@@ -28,8 +28,11 @@ public class FurnitureConfig
 public class LocationConfig
 {
     public string SemanticName { get; set; } = string.Empty;
+    public string Type { get; set; } = "Place"; // "Country", "City", "Place"
     public System.Collections.Generic.List<string> Aliases { get; set; } = new();
     public CoordinatesConfig Coordinates { get; set; } = new();
+    public CoordinatesConfig MinBounds { get; set; } = new();
+    public CoordinatesConfig MaxBounds { get; set; } = new();
     public System.Collections.Generic.List<FurnitureConfig> Furniture { get; set; } = new();
 }
 

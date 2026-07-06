@@ -18,10 +18,24 @@ public static class LocationCoordinateRegistry
             _configs = configs.ToList();
             _semanticToCoords = _configs.ToDictionary(
                 c => c.SemanticName,
-                c => (c.Coordinates.X, c.Coordinates.Y, c.Coordinates.Z),
+                c => {
+                    if (c.Type == "Place")
+                    {
+                        return (c.Coordinates.X, c.Coordinates.Y, c.Coordinates.Z);
+                    }
+                    else
+                    {
+                        // 사각형(국가/도시)의 경우 중심점을 가상 좌표로 등록하여 하위 호환성 유지
+                        return (
+                            (c.MinBounds.X + c.MaxBounds.X) / 2f,
+                            (c.MinBounds.Y + c.MaxBounds.Y) / 2f,
+                            (c.MinBounds.Z + c.MaxBounds.Z) / 2f
+                        );
+                    }
+                },
                 StringComparer.OrdinalIgnoreCase
             );
-            Console.WriteLine($"[Registry] Initialized with {_configs.Count} locations from configuration.");
+            Console.WriteLine($"[Registry] Initialized with {_configs.Count} locations from configuration (including hierarchical regions).");
         }
     }
 
@@ -37,8 +51,121 @@ public static class LocationCoordinateRegistry
     {
         lock (_lock)
         {
-            return string.Join("\n", _configs.Select(c => $"- {c.SemanticName}"));
+            return string.Join("\n", _configs.Select(c => $"- {c.SemanticName} ({c.Type})"));
         }
+    }
+
+    public static LocationConfig? GetConfig(string rawLocation)
+    {
+        if (string.IsNullOrWhiteSpace(rawLocation)) return null;
+
+        lock (_lock)
+        {
+            foreach (var config in _configs)
+            {
+                if (config.SemanticName.Contains(rawLocation, StringComparison.OrdinalIgnoreCase) ||
+                    rawLocation.Contains(config.SemanticName, StringComparison.OrdinalIgnoreCase))
+                {
+                    return config;
+                }
+
+                if (config.Aliases != null)
+                {
+                    foreach (var alias in config.Aliases)
+                    {
+                        if (rawLocation.Contains(alias, StringComparison.OrdinalIgnoreCase) ||
+                            alias.Contains(rawLocation, StringComparison.OrdinalIgnoreCase))
+                        {
+                            return config;
+                        }
+                    }
+                }
+            }
+            return null;
+        }
+    }
+
+    public static List<string> GetLodLocationList(string currentPlaceName)
+    {
+        var coords = GetCoordinates(currentPlaceName);
+        return GetLodLocationList(coords.X, coords.Z);
+    }
+
+    public static List<string> GetLodLocationList(float ax, float az)
+    {
+        lock (_lock)
+        {
+            // 1. 현재 에이전트 좌표를 포함하고 있는 영역(Region)들을 크기 순 정렬하여 추출
+            var containingRegions = _configs
+                .Where(c => c.Type != "Place" && 
+                            ax >= c.MinBounds.X && ax <= c.MaxBounds.X && 
+                            az >= c.MinBounds.Z && az <= c.MaxBounds.Z)
+                .OrderBy(c => (c.MaxBounds.X - c.MinBounds.X) * (c.MaxBounds.Z - c.MinBounds.Z))
+                .ToList();
+
+            var currentCity = containingRegions.FirstOrDefault(r => r.Type == "City");
+            var currentCountry = containingRegions.FirstOrDefault(r => r.Type == "Country");
+
+            var result = new List<string>();
+
+            foreach (var c in _configs)
+            {
+                if (c.Type == "Place")
+                {
+                    // 현재 위치한 도시 내부에 속한 세부 장소만 노출
+                    if (currentCity != null)
+                    {
+                        if (IsInBox(c.Coordinates.X, c.Coordinates.Z, currentCity))
+                        {
+                            result.Add(c.SemanticName);
+                        }
+                    }
+                    else if (currentCountry != null)
+                    {
+                        // 도시를 못 찾았을 경우 국가 내부 장소 노출
+                        if (IsInBox(c.Coordinates.X, c.Coordinates.Z, currentCountry))
+                        {
+                            result.Add(c.SemanticName);
+                        }
+                    }
+                    else
+                    {
+                        // 어떤 영역에도 속해있지 않은 경우 전역 장소 노출 (Fallback)
+                        result.Add(c.SemanticName);
+                    }
+                }
+                else if (c.Type == "City")
+                {
+                    if (c == currentCity) continue; // 현재 속한 도시는 스킵 (세부 장소들을 보임)
+
+                    // 현재 국가 내부에 있는 다른 도시들만 노출
+                    if (currentCountry != null)
+                    {
+                        float cx = (c.MinBounds.X + c.MaxBounds.X) / 2f;
+                        float cz = (c.MinBounds.Z + c.MaxBounds.Z) / 2f;
+                        if (IsInBox(cx, cz, currentCountry))
+                        {
+                            result.Add(c.SemanticName);
+                        }
+                    }
+                }
+                else if (c.Type == "Country")
+                {
+                    if (c == currentCountry) continue; // 현재 속한 국가는 스킵
+
+                    // 다른 국가들은 국가명 자체를 노출 (원거리 마트료시카 껍데기)
+                    result.Add(c.SemanticName);
+                }
+            }
+
+            return result;
+        }
+    }
+
+    private static bool IsInBox(float x, float z, LocationConfig box)
+    {
+        return x >= box.MinBounds.X && x <= box.MaxBounds.X &&
+               z >= box.MinBounds.Z && z <= box.MaxBounds.Z;
     }
 
     public static (float X, float Y, float Z) GetCoordinates(string semanticName)
@@ -47,7 +174,6 @@ public static class LocationCoordinateRegistry
 
         lock (_lock)
         {
-            // Direct/contains check on keys
             foreach (var kv in _semanticToCoords)
             {
                 if (semanticName.Contains(kv.Key, StringComparison.OrdinalIgnoreCase) || 
@@ -62,33 +188,8 @@ public static class LocationCoordinateRegistry
 
     public static string ParseLocation(string rawLocation)
     {
-        if (string.IsNullOrWhiteSpace(rawLocation)) return GetAllSemanticNames().FirstOrDefault() ?? "Unknown";
-
-        lock (_lock)
-        {
-            foreach (var config in _configs)
-            {
-                if (config.SemanticName.Contains(rawLocation, StringComparison.OrdinalIgnoreCase) ||
-                    rawLocation.Contains(config.SemanticName, StringComparison.OrdinalIgnoreCase))
-                {
-                    return config.SemanticName;
-                }
-
-                if (config.Aliases != null)
-                {
-                    foreach (var alias in config.Aliases)
-                    {
-                        if (rawLocation.Contains(alias, StringComparison.OrdinalIgnoreCase) ||
-                            alias.Contains(rawLocation, StringComparison.OrdinalIgnoreCase))
-                        {
-                            return config.SemanticName;
-                        }
-                    }
-                }
-            }
-            
-            return GetAllSemanticNames().FirstOrDefault() ?? "Unknown";
-        }
+        var config = GetConfig(rawLocation);
+        return config?.SemanticName ?? GetAllSemanticNames().FirstOrDefault() ?? "Unknown";
     }
 
     public static LocationInfo CreateLocationInfo(string name)
@@ -108,4 +209,127 @@ public static class LocationCoordinateRegistry
             return _configs.ToList();
         }
     }
+
+    public static (float X, float Y, float Z) GetTargetCoordinate(string fromLoc, string toLoc)
+    {
+        var configA = GetConfig(fromLoc);
+        var configB = GetConfig(toLoc);
+        if (configB == null) return (0f, 0f, 0f);
+
+        if (configB.Type == "Place")
+        {
+            return (configB.Coordinates.X, configB.Coordinates.Y, configB.Coordinates.Z);
+        }
+
+        // AABB(국가/도시) 타겟인 경우 출발지 기준 테두리 경계선 좌표 Clamping 계산
+        float ax = 0f, ay = 0f, az = 0f;
+        if (configA != null)
+        {
+            if (configA.Type == "Place")
+            {
+                ax = configA.Coordinates.X;
+                ay = configA.Coordinates.Y;
+                az = configA.Coordinates.Z;
+            }
+            else
+            {
+                ax = (configA.MinBounds.X + configA.MaxBounds.X) / 2f;
+                ay = (configA.MinBounds.Y + configA.MaxBounds.Y) / 2f;
+                az = (configA.MinBounds.Z + configA.MaxBounds.Z) / 2f;
+            }
+        }
+
+        float bx = Math.Clamp(ax, configB.MinBounds.X, configB.MaxBounds.X);
+        float by = Math.Clamp(ay, configB.MinBounds.Y, configB.MaxBounds.Y);
+        float bz = Math.Clamp(az, configB.MinBounds.Z, configB.MaxBounds.Z);
+        return (bx, by, bz);
+    }
+
+    public static int GetTravelTimeHours(string locA, string locB)
+    {
+        if (string.IsNullOrWhiteSpace(locA) || string.IsNullOrWhiteSpace(locB)) return 0;
+        
+        string parsedA = ParseLocation(locA);
+        string parsedB = ParseLocation(locB);
+        if (string.Equals(parsedA, parsedB, StringComparison.OrdinalIgnoreCase)) return 0;
+
+        var configA = GetConfig(parsedA);
+        var configB = GetConfig(parsedB);
+        if (configA == null || configB == null) return 0;
+
+        float ax, ay, az;
+        if (configA.Type == "Place")
+        {
+            ax = configA.Coordinates.X;
+            ay = configA.Coordinates.Y;
+            az = configA.Coordinates.Z;
+        }
+        else
+        {
+            ax = (configA.MinBounds.X + configA.MaxBounds.X) / 2f;
+            ay = (configA.MinBounds.Y + configA.MaxBounds.Y) / 2f;
+            az = (configA.MinBounds.Z + configA.MaxBounds.Z) / 2f;
+        }
+
+        // B가 사각 영역인 경우 가장 가까운 경계선(Clamped)을 찾아 거리 계산
+        float bx, by, bz;
+        if (configB.Type == "Place")
+        {
+            bx = configB.Coordinates.X;
+            by = configB.Coordinates.Y;
+            bz = configB.Coordinates.Z;
+        }
+        else
+        {
+            bx = Math.Clamp(ax, configB.MinBounds.X, configB.MaxBounds.X);
+            by = Math.Clamp(ay, configB.MinBounds.Y, configB.MaxBounds.Y);
+            bz = Math.Clamp(az, configB.MinBounds.Z, configB.MaxBounds.Z);
+        }
+
+        double dx = ax - bx;
+        double dy = ay - by;
+        double dz = az - bz;
+        double distance = Math.Sqrt(dx * dx + dy * dy + dz * dz);
+
+        // NPC speed = 2.0 m/s
+        // 1 game hour = 200 physics ticks = 10 real-world seconds
+        // Therefore, 1 game hour travel distance = 2.0 m/s * 10s = 20.0 meters.
+        double hours = distance / 20.0;
+        return (int)Math.Max(1, Math.Round(hours));
+    }
+
+    public static int GetTravelTimeHoursFromCoord(float ax, float ay, float az, string targetLoc)
+    {
+        if (string.IsNullOrWhiteSpace(targetLoc)) return 0;
+        
+        string parsedB = ParseLocation(targetLoc);
+        var configB = GetConfig(parsedB);
+        if (configB == null) return 0;
+
+        float bx, by, bz;
+        if (configB.Type == "Place")
+        {
+            bx = configB.Coordinates.X;
+            by = configB.Coordinates.Y;
+            bz = configB.Coordinates.Z;
+        }
+        else
+        {
+            bx = Math.Clamp(ax, configB.MinBounds.X, configB.MaxBounds.X);
+            by = Math.Clamp(ay, configB.MinBounds.Y, configB.MaxBounds.Y);
+            bz = Math.Clamp(az, configB.MinBounds.Z, configB.MaxBounds.Z);
+        }
+
+        double dx = ax - bx;
+        double dy = ay - by;
+        double dz = az - bz;
+        double distance = Math.Sqrt(dx * dx + dy * dy + dz * dz);
+
+        // 도착 기준 거리: 테두리 경계선과 1.5미터 이하
+        if (distance < 1.5) return 0;
+
+        double hours = distance / 20.0;
+        return (int)Math.Max(1, Math.Round(hours));
+    }
 }
+
