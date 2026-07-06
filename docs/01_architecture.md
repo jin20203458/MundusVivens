@@ -1,15 +1,15 @@
-# 🗺️ Mundus Vivens: C++ Game Server Architecture Map
+# Mundus Vivens: C++ Game Server Architecture Map
 
-이 문서는 개발/유지보수를 위해 실시간으로 업데이트되는 **서버 시스템의 뼈대(Architecture)**이자 **에이전트 참조용 살아있는 기술 지도(Agent-Friendly Living Map)**입니다. 코딩 에이전트는 이 문서의 심볼 링크를 통해 소스 코드를 직접 참조하며 시스템 흐름을 파악합니다.
+본 문서는 C++ 게임 서버의 아키텍처 명세 및 시스템 흐름을 설명합니다.
 
 ---
 
 ## <thread_model>
-### 🧵 1. 3-스레드 멀티 리액터 모델 (Thread Model)
+### 1. 3-스레드 멀티 리액터 모델 (Thread Model)
 
 서버는 데이터 레이스(Data Race)를 원천 차단하고 실시간 물리 연산과 비동기 통신의 지연(Latency) 병목을 분리하기 위해 3개의 스레드로 역할을 엄격하게 쪼개어 가동합니다.
 
-`[IMPLEMENTED]` 3-스레드 분리 아키텍처는 [main.cpp](file:///C:/Users/adg01/Documents/GitHub/MundusVivens.GameServer.Cpp/main.cpp)의 초기화 루틴에 구현되어 있습니다.
+`[IMPLEMENTED]` 3-스레드 분리 아키텍처는 [main.cpp](../../MundusVivens.GameServer.Cpp/main.cpp)의 초기화 루틴에 구현되어 있습니다.
 
 ```mermaid
 graph TD
@@ -37,17 +37,17 @@ graph TD
     G_Context -->|콜백 실행 및 grpc_queue.Push| D
 ```
 
-*   **메인 스레드**: 물리 연산, ECS 레지스트리 제어, 스케줄 이동 등 **게임 월드의 모든 상태 변화**를 락(Lock) 없이 독점 처리합니다. (Logic Tick 계열은 5초 단위 물리적 틱 동기화 시에만 실행)
-*   **I/O 스레드**: [TcpServer.cpp](file:///C:/Users/adg01/Documents/GitHub/MundusVivens.GameServer.Cpp/TcpServer.cpp)에서 외부 유저(클라이언트)와의 소켓 통신(패킷 송수신)만 전담합니다.
-*   **gRPC 스레드**: [AsyncGrpcClient.cpp](file:///C:/Users/adg01/Documents/GitHub/MundusVivens.GameServer.Cpp/AsyncGrpcClient.cpp)에서 C# AI 서버와의 AI 백엔드 통신(gRPC RPC)만 전담합니다.
+*   **메인 스레드**: 물리 연산, ECS 레지스트리 제어, 스케줄 이동 등 **게임 월드의 모든 상태 변화**를 락(Lock) 없이 독점 처리합니다. (Logic Tick 계열은 10초 단위 물리적 틱 동기화 시에만 실행)
+*   **I/O 스레드**: [TcpServer.cpp](../../MundusVivens.GameServer.Cpp/TcpServer.cpp)에서 외부 유저(클라이언트)와의 소켓 통신(패킷 송수신)만 전담합니다.
+*   **gRPC 스레드**: [AsyncGrpcClient.cpp](../../MundusVivens.GameServer.Cpp/AsyncGrpcClient.cpp)에서 C# AI 서버와의 AI 백엔드 통신(gRPC RPC)만 전담합니다.
 </thread_model>
 
 ---
 
 ## <tick_sync_flow>
-### 🔄 2. 틱 동기화 및 관계 델타 데이터 흐름 (ProcessWorldTick Flow)
+### 2. 틱 동기화 및 관계 델타 데이터 흐름 (ProcessWorldTick Flow)
 
-`[IMPLEMENTED]` C# AI 서버에서 연산된 복잡한 인지 결과와 관계 변동 수치(`RelationshipDelta`)가 C++ 서버의 ECS(엔티티 컴포넌트 시스템)로 유입되는 스레드 안전 경로입니다. (관련 로직: [AsyncGrpcClient.cpp](file:///C:/Users/adg01/Documents/GitHub/MundusVivens.GameServer.Cpp/AsyncGrpcClient.cpp#L22))
+`[IMPLEMENTED]` C# AI 서버에서 연산된 복잡한 인지 결과와 관계 변동 수치(`RelationshipDelta`)가 C++ 서버의 ECS(엔티티 컴포넌트 시스템)로 유입되는 스레드 안전 경로입니다. (관련 로직: [AsyncGrpcClient.cpp](../../MundusVivens.GameServer.Cpp/AsyncGrpcClient.cpp#L22))
 
 ```mermaid
 sequenceDiagram
@@ -56,7 +56,7 @@ sequenceDiagram
     participant gRPC as gRPC 스레드 (agrpc::GrpcContext)
     participant CSharp as C# AI 서버
 
-    Main->>gRPC: 5초마다 ProcessWorldTickAsync(next_tick) 호출 요청
+    Main->>gRPC: 10초(200 물리 틱)마다 ProcessWorldTickAsync(next_tick) 호출 요청
     Note over gRPC: boost::asio::co_spawn(grpc_ctx)으로 코루틴 실행
     gRPC->>CSharp: 네트워크 전송 (co_await RPC::request)
     Note over CSharp: LLM 대화 결과 분석 및 관계 변동 연산
@@ -72,11 +72,11 @@ sequenceDiagram
 ---
 
 ## <social_interaction>
-### 💬 3. 대화 트리거 & 다자간 합류 로직 (Dialogue Trigger Logic)
+### 3. 대화 트리거 & 다자간 합류 로직 (Dialogue Trigger Logic)
 
-`[IMPLEMENTED]` 매 5초(논리 틱)마다 [Systems.cpp](file:///C:/Users/adg01/Documents/GitHub/MundusVivens.GameServer.Cpp/Systems.cpp) 내부의 `SystemSocialInteraction` 시스템에서 공간 인접 NPC들 간의 2단계(주도/수락) 대화 성사 및 제3자 다자간 합류 확률을 계산합니다.
+`[IMPLEMENTED]` 매 10초(논리 틱)마다 [Systems.cpp](../../MundusVivens.GameServer.Cpp/Systems.cpp) 내부의 `SystemSocialInteraction` 시스템에서 공간 인접 NPC들 간의 2단계(주도/수락) 대화 성사 및 제3자 다자간 합류 확률을 계산합니다.
 
-#### 📊 대화 확률 공식
+#### 대화 확률 공식
 1.  **주도자(Initiator) 대화 주도 확률**
     `initiation_prob = 15% * (0.3 + extroversion_i) * location_modifier`
     *   최소/최대 제한: `[2%, 60%]`
@@ -92,7 +92,7 @@ sequenceDiagram
     *   합류 확률: `join_prob = 25% * (0.5 + extroversion_c) * relationship_coeff * group_penalty`
     *   최소/최대 제한: `[0%, 50%]`, 최대 그룹 제한: `4명`
 
-#### 🔀 대화 트리거 흐름도 (Flowchart)
+#### 대화 트리거 흐름도 (Flowchart)
 ```mermaid
 flowchart TD
     Start([1. 공간 해시 그리드 내 구역별 후보 스캔]) --> FilterCandidates[2. 대화 불가능 후보 제외]
