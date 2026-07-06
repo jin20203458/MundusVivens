@@ -8,9 +8,9 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace MundusVivens.Prototype.Services
-{
-    public interface IPlayerDialogueManager
+namespace MundusVivens.Prototype.Services;
+
+public interface IPlayerDialogueManager
     {
         Task<(bool Success, string Message, ulong SessionId, string Greeting)> StartDialogueAsync(string playerId, string npcId, CancellationToken cancellationToken = default);
         Task<string> SendMessageAsync(ulong sessionId, string messageText, CancellationToken cancellationToken = default);
@@ -710,4 +710,3 @@ namespace MundusVivens.Prototype.Services
             return response.Trim().Replace("\"", "");
         }
     }
-}

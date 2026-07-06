@@ -29,4 +29,9 @@
     <ProjectReference Include="..\AiAgent.Diagnostics\AiAgent.Diagnostics.csproj" />
   </ItemGroup>
 
+  <!-- 🆕 gRPC Proto 동기화 타겟 (내용이 다를 경우 최신 수정본으로 자동 복사) -->
+  <Target Name="SyncProto" BeforeTargets="BeforeBuild" Condition="'$(OS)' == 'Windows_NT' And Exists('../../MundusVivens.GameServer.Cpp/Protos/mundus_vivens.proto')">
+    <Exec Command="powershell -ExecutionPolicy Bypass -Command &quot;if (Test-Path '../../MundusVivens.GameServer.Cpp/Protos/mundus_vivens.proto') { $Cpp = '../../MundusVivens.GameServer.Cpp/Protos/mundus_vivens.proto'; $Cs = 'Protos/mundus_vivens.proto'; if ((Get-FileHash $Cpp).Hash -ne (Get-FileHash $Cs).Hash) { if ((Get-Item $Cpp).LastWriteTime -gt (Get-Item $Cs).LastWriteTime) { Copy-Item $Cpp $Cs -Force; Write-Host '🔄 [Proto Sync] Synced C++ -> C# (C++ is newer)' -ForegroundColor Green } else { Copy-Item $Cs $Cpp -Force; Write-Host '🔄 [Proto Sync] Synced C# -> C++ (C# is newer)' -ForegroundColor Green } } }&quot;" />
+  </Target>
+
 </Project>
