@@ -124,13 +124,10 @@ public class MundusVivensGrpcService : MundusVivensGrpc.MundusVivensGrpcBase
                         {
                             NpcId = agent.NumericId,
                             JobId = agent.Status.ActiveJobId,
-                            TargetLocation = new LocationInfo
-                            {
-                                Name = agent.Status.ActiveJobLocation,
-                                Position = new Vector3 { X = agent.Status.ActiveJobX, Y = agent.Status.ActiveJobY, Z = agent.Status.ActiveJobZ }
-                            },
+                            TargetLocation = LocationCoordinateRegistry.CreateLocationInfo(agent.Status.ActiveJobLocation, agent.Status.ActiveJobX, agent.Status.ActiveJobY, agent.Status.ActiveJobZ),
                             Intent = agent.Status.ActiveJobIntent,
-                            Priority = 2 // 돌발 동기화 일정이므로 2 우선순위
+                            Priority = 2,
+                            Category = JobCategoryMapper.Map(agent.Status.ActiveJobIntent)
                         });
                     }
                 }
@@ -156,11 +153,7 @@ public class MundusVivensGrpcService : MundusVivensGrpc.MundusVivensGrpcBase
         var response = new GetAgentStatusResponse
         {
             Name = agent.Persona.Name,
-            Location = new LocationInfo
-            {
-                Name = agent.Status.CurrentLocation,
-                Position = new Vector3 { X = agent.Status.X, Y = agent.Status.Y, Z = agent.Status.Z }
-            },
+            Location = LocationCoordinateRegistry.CreateLocationInfo(agent.Status.CurrentLocation, agent.Status.X, agent.Status.Y, agent.Status.Z),
             Emotion = agent.Status.Emotion,
             Activity = agent.Status.Activity
         };
@@ -264,11 +257,7 @@ public class MundusVivensGrpcService : MundusVivensGrpc.MundusVivensGrpcBase
                     Movement = new MovementEvent
                     {
                         AgentId = agentReq.AgentId,
-                        FromLocation = new LocationInfo
-                        {
-                            Name = oldLocation,
-                            Position = new Vector3 { X = oldX, Y = oldY, Z = oldZ }
-                        },
+                        FromLocation = LocationCoordinateRegistry.CreateLocationInfo(oldLocation, oldX, oldY, oldZ),
                         ToLocation = agentReq.Location
                     }
                 };
@@ -422,11 +411,7 @@ public class MundusVivensGrpcService : MundusVivensGrpc.MundusVivensGrpcBase
             {
                 AgentId = kv.Value.NumericId,
                 Name = kv.Value.Persona.Name ?? string.Empty,
-                Location = new LocationInfo
-                {
-                    Name = initialLoc ?? "Unknown",
-                    Position = new Vector3 { X = initX, Y = initY, Z = initZ }
-                },
+                Location = LocationCoordinateRegistry.CreateLocationInfo(initialLoc, initX, initY, initZ),
                 Emotion = kv.Value.Status.Emotion ?? "평온",
                 Activity = kv.Value.Status.Activity ?? "대기",
                 Extroversion = (float)kv.Value.Persona.Extroversion,
@@ -462,12 +447,23 @@ public class MundusVivensGrpcService : MundusVivensGrpc.MundusVivensGrpcBase
                 float absoluteY = locConfig.Coordinates.Y + furnConfig.Offset.Y;
                 float absoluteZ = locConfig.Coordinates.Z + furnConfig.Offset.Z;
 
+                var protoType = furnConfig.Type.ToLower() switch
+                {
+                    "sit" => ProtoAffordanceType.AffordanceSit,
+                    "sleep" => ProtoAffordanceType.AffordanceSleep,
+                    "eat" => ProtoAffordanceType.AffordanceEat,
+                    "drink" => ProtoAffordanceType.AffordanceDrink,
+                    "pray" => ProtoAffordanceType.AffordancePray,
+                    _ => ProtoAffordanceType.AffordanceUnspecified
+                };
+
                 response.Furniture.Add(new FurnitureInfo
                 {
                     Name = furnConfig.Name,
-                    Type = furnConfig.Type,
+                    Type = protoType,
                     ParentLocation = locConfig.SemanticName,
-                    Position = new Vector3 { X = absoluteX, Y = absoluteY, Z = absoluteZ }
+                    Position = new Vector3 { X = absoluteX, Y = absoluteY, Z = absoluteZ },
+                    IsTemporary = false
                 });
             }
         }
@@ -496,13 +492,10 @@ public class MundusVivensGrpcService : MundusVivensGrpc.MundusVivensGrpcBase
                 {
                     NpcId = agent.NumericId,
                     JobId = agent.Status.ActiveJobId,
-                    TargetLocation = new LocationInfo
-                    {
-                        Name = agent.Status.ActiveJobLocation,
-                        Position = new Vector3 { X = agent.Status.ActiveJobX, Y = agent.Status.ActiveJobY, Z = agent.Status.ActiveJobZ }
-                    },
+                    TargetLocation = LocationCoordinateRegistry.CreateLocationInfo(agent.Status.ActiveJobLocation, agent.Status.ActiveJobX, agent.Status.ActiveJobY, agent.Status.ActiveJobZ),
                     Intent = agent.Status.ActiveJobIntent,
-                    Priority = 1
+                    Priority = 1,
+                    Category = JobCategoryMapper.Map(agent.Status.ActiveJobIntent)
                 });
                 continue;
             }
@@ -532,13 +525,10 @@ public class MundusVivensGrpcService : MundusVivensGrpc.MundusVivensGrpcBase
                     {
                         NpcId = agent.NumericId,
                         JobId = newJobId,
-                        TargetLocation = new LocationInfo
-                        {
-                            Name = item.TargetLocation,
-                            Position = new Vector3 { X = targetX, Y = targetY, Z = targetZ }
-                        },
+                        TargetLocation = LocationCoordinateRegistry.CreateLocationInfo(item.TargetLocation, targetX, targetY, targetZ),
                         Intent = item.Activity,
-                        Priority = 1
+                        Priority = 1,
+                        Category = JobCategoryMapper.Map(item.Activity)
                     });
 
                     Console.WriteLine($"💼 [JobGiver] NPC '{agent.Persona.Name}'에게 새 Job {newJobId} 발급: 위치={item.TargetLocation} ({targetX:0.0}, {targetY:0.0}, {targetZ:0.0}), 행동={item.Activity}");
@@ -790,13 +780,10 @@ public class MundusVivensGrpcService : MundusVivensGrpc.MundusVivensGrpcBase
             {
                 NpcId = agent.NumericId,
                 JobId = newJobId,
-                TargetLocation = new LocationInfo
-                {
-                    Name = correctedLocation,
-                    Position = new Vector3 { X = targetX, Y = targetY, Z = targetZ }
-                },
+                TargetLocation = LocationCoordinateRegistry.CreateLocationInfo(correctedLocation, targetX, targetY, targetZ),
                 Intent = replan.Activity,
-                Priority = 2
+                Priority = 2,
+                Category = JobCategoryMapper.Map(replan.Activity)
             };
         }
 

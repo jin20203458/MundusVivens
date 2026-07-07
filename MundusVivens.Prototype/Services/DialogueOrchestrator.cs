@@ -391,7 +391,8 @@ public class DialogueOrchestrator : IDialogueOrchestrator
                 {
                     AgentId = agent.NumericId,
                     NewEmotion = emUpdate.NewEmotion,
-                    Intensity = ParseIntensity(emUpdate.Intensity)
+                    Intensity = ParseIntensity(emUpdate.Intensity),
+                    Category = EmotionMapper.Map(emUpdate.NewEmotion)
                 });
             }
         }

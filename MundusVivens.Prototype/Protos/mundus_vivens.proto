@@ -13,6 +13,9 @@ message Vector3 {
 message LocationInfo {
   string name = 1;
   Vector3 position = 2;
+  ProtoLocationType type = 3;
+  uint32 region_id = 4;
+  uint32 territory_id = 5;
 }
 
 service MundusVivensGrpc {
@@ -231,15 +234,58 @@ message InitialAgentState {
 
 message FurnitureInfo {
   string name = 1;
-  string type = 2;
+  ProtoAffordanceType type = 2;
   string parent_location = 3;
   Vector3 position = 4;
+  bool is_temporary = 5;
 }
 
 message GetWorldBootstrapResponse {
   repeated LocationInfo locations = 1;
   repeated InitialAgentState agents = 2;
   repeated FurnitureInfo furniture = 3;
+}
+
+enum ProtoLocationType {
+  LOCATION_TYPE_UNSPECIFIED = 0;
+  LOCATION_TYPE_TAVERN = 1;
+  LOCATION_TYPE_MARKET = 2;
+  LOCATION_TYPE_SQUARE = 3;
+  LOCATION_TYPE_CHURCH = 4;
+  LOCATION_TYPE_WILDERNESS = 5;
+  LOCATION_TYPE_RESIDENTIAL = 6;
+  LOCATION_TYPE_FORGE = 7;
+  LOCATION_TYPE_MANOR = 8;
+  LOCATION_TYPE_COUNTRY = 9;
+  LOCATION_TYPE_CITY = 10;
+  LOCATION_TYPE_PLACE = 11;
+}
+
+enum ProtoEmotionCategory {
+  EMOTION_CATEGORY_UNSPECIFIED = 0;
+  EMOTION_CATEGORY_NEUTRAL = 1;
+  EMOTION_CATEGORY_ANGER = 2;
+  EMOTION_CATEGORY_HOSTILITY = 3;
+  EMOTION_CATEGORY_FEAR = 4;
+}
+
+enum ProtoJobCategory {
+  JOB_CATEGORY_UNSPECIFIED = 0;
+  JOB_CATEGORY_SLEEP = 1;
+  JOB_CATEGORY_EAT = 2;
+  JOB_CATEGORY_SOCIAL = 3;
+  JOB_CATEGORY_WORK = 4;
+  JOB_CATEGORY_TRAVEL = 5;
+  JOB_CATEGORY_SURVIVAL = 6;
+}
+
+enum ProtoAffordanceType {
+  AFFORDANCE_UNSPECIFIED = 0;
+  AFFORDANCE_SIT = 1;
+  AFFORDANCE_SLEEP = 2;
+  AFFORDANCE_EAT = 3;
+  AFFORDANCE_DRINK = 4;
+  AFFORDANCE_PRAY = 5;
 }
 
 enum EmotionIntensity {
@@ -254,6 +300,7 @@ message AgentEmotionUpdate {
   uint32 agent_id = 1;
   string new_emotion = 2;
   EmotionIntensity intensity = 3;
+  ProtoEmotionCategory category = 4;
 }
 
 message BatchUpdateAgentStatusRequest {
@@ -352,6 +399,7 @@ message JobPayload {
   string intent = 4;
   uint32 target_agent_id = 5; // 선택적 (예: 상호작용 대상 NPC)
   int32 priority = 6;
+  ProtoJobCategory category = 7;
 }
 
 message GetPendingJobsResponse {

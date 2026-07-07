@@ -192,14 +192,123 @@ public static class LocationCoordinateRegistry
         return config?.SemanticName ?? GetAllSemanticNames().FirstOrDefault() ?? "Unknown";
     }
 
-    public static LocationInfo CreateLocationInfo(string name)
+    private static readonly Dictionary<string, int> PredefinedIds = new(StringComparer.OrdinalIgnoreCase)
     {
-        var (x, y, z) = GetCoordinates(name);
+        { "발레리아 왕국", 1 },
+        { "아르카디아 제국", 2 },
+        { "루미스 마을", 10 },
+        { "왕국 수도", 11 },
+        { "제국 수도", 12 }
+    };
+
+    public static int GetDeterministicId(string name)
+    {
+        if (PredefinedIds.TryGetValue(name, out var id))
+            return id;
+        return Math.Abs(name.GetHashCode()) % 1000 + 100;
+    }
+
+    public static (int regionId, int territoryId) ResolveHierarchyIds(float x, float z)
+    {
+        int regionId = 0;
+        int territoryId = 0;
+
+        lock (_lock)
+        {
+            var containingCountry = _configs
+                .FirstOrDefault(c => c.Type.Equals("Country", StringComparison.OrdinalIgnoreCase) && 
+                                     x >= c.MinBounds.X && x <= c.MaxBounds.X && 
+                                     z >= c.MinBounds.Z && z <= c.MaxBounds.Z);
+
+            var containingCity = _configs
+                .FirstOrDefault(c => c.Type.Equals("City", StringComparison.OrdinalIgnoreCase) && 
+                                     x >= c.MinBounds.X && x <= c.MaxBounds.X && 
+                                     z >= c.MinBounds.Z && z <= c.MaxBounds.Z);
+
+            if (containingCountry != null)
+                regionId = GetDeterministicId(containingCountry.SemanticName);
+            
+            if (containingCity != null)
+                territoryId = GetDeterministicId(containingCity.SemanticName);
+        }
+
+        return (regionId, territoryId);
+    }
+
+    public static LocationInfo CreateLocationInfo(string name, float x, float y, float z)
+    {
+        var config = GetConfig(name);
+        var protoType = ProtoLocationType.LocationTypeUnspecified;
+
+        if (config != null)
+        {
+            protoType = config.Type.ToLower() switch
+            {
+                "country" => ProtoLocationType.LocationTypeCountry,
+                "city" => ProtoLocationType.LocationTypeCity,
+                "place" => ProtoLocationType.LocationTypePlace,
+                _ => ProtoLocationType.LocationTypeUnspecified
+            };
+            
+            // If it's a place, refine type by semantic name matching
+            if (protoType == ProtoLocationType.LocationTypePlace)
+            {
+                var lowerName = config.SemanticName.ToLower();
+                if (lowerName.Contains("tavern") || lowerName.Contains("술집"))
+                    protoType = ProtoLocationType.LocationTypeTavern;
+                else if (lowerName.Contains("market") || lowerName.Contains("시장"))
+                    protoType = ProtoLocationType.LocationTypeMarket;
+                else if (lowerName.Contains("square") || lowerName.Contains("광장"))
+                    protoType = ProtoLocationType.LocationTypeSquare;
+                else if (lowerName.Contains("church") || lowerName.Contains("성당"))
+                    protoType = ProtoLocationType.LocationTypeChurch;
+                else if (lowerName.Contains("forge") || lowerName.Contains("대장간"))
+                    protoType = ProtoLocationType.LocationTypeForge;
+                else if (lowerName.Contains("manor") || lowerName.Contains("저택"))
+                    protoType = ProtoLocationType.LocationTypeManor;
+                else if (lowerName.Contains("wilderness") || lowerName.Contains("황무지"))
+                    protoType = ProtoLocationType.LocationTypeWilderness;
+                else
+                    protoType = ProtoLocationType.LocationTypeResidential;
+            }
+        }
+        else
+        {
+            var lowerName = (name ?? "").ToLower();
+            if (lowerName.Contains("tavern") || lowerName.Contains("술집"))
+                protoType = ProtoLocationType.LocationTypeTavern;
+            else if (lowerName.Contains("market") || lowerName.Contains("시장"))
+                protoType = ProtoLocationType.LocationTypeMarket;
+            else if (lowerName.Contains("square") || lowerName.Contains("광장"))
+                protoType = ProtoLocationType.LocationTypeSquare;
+            else if (lowerName.Contains("church") || lowerName.Contains("성당"))
+                protoType = ProtoLocationType.LocationTypeChurch;
+            else if (lowerName.Contains("forge") || lowerName.Contains("대장간"))
+                protoType = ProtoLocationType.LocationTypeForge;
+            else if (lowerName.Contains("manor") || lowerName.Contains("저택"))
+                protoType = ProtoLocationType.LocationTypeManor;
+            else if (lowerName.Contains("wilderness") || lowerName.Contains("황무지"))
+                protoType = ProtoLocationType.LocationTypeWilderness;
+            else
+                protoType = ProtoLocationType.LocationTypeResidential;
+        }
+
+        var (regionId, territoryId) = ResolveHierarchyIds(x, z);
+
         return new LocationInfo
         {
             Name = name ?? "Unknown",
-            Position = new Vector3 { X = x, Y = y, Z = z }
+            Position = new Vector3 { X = x, Y = y, Z = z },
+            Type = protoType,
+            RegionId = (uint)regionId,
+            TerritoryId = (uint)territoryId
         };
+    }
+
+    public static LocationInfo CreateLocationInfo(string name)
+    {
+        var (x, y, z) = GetCoordinates(name);
+        return CreateLocationInfo(name, x, y, z);
     }
 
     public static List<LocationConfig> GetConfigs()
