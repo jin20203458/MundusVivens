@@ -22,11 +22,11 @@ Focus: Gemini API cost optimization, LiteDB Hot/Cold memory hierarchy, async dou
 </critical_rules>
 
 <context_triggers>
-- **Knowledge Base**: If modifying LLM/memory logic, read `docs/02_agent_design.md`.
+- **Knowledge Base**: If modifying LLM/memory logic, read `../Obsidian.Agent/MundusVivens/docs/02_agent_design.md`.
 - **Troubleshooting**: If debugging, read `../Obsidian.Agent/troubleshooting/mundus_vivens.md` before coding.
 </context_triggers>
 
 <post_action>
 - **Log**: Document resolved bugs in `../Obsidian.Agent/troubleshooting/mundus_vivens.md`. (Ignore simple refactors/optimizations)
-- **Sync**: Update specs in `../MundusVivens/docs/` if architecture changes.
+- **Sync**: Update specs in `../Obsidian.Agent/MundusVivens/docs/` if architecture changes.
 </post_action>
