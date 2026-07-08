@@ -22,7 +22,6 @@ public interface IPlayerDialogueManager
     {
         private readonly IGeminiApiService _apiService;
         private readonly IBeliefEngine _beliefEngine;
-        private readonly IWorldEventBroadcaster _broadcaster;
         private readonly MemoryEventLogger _memoryLogger;
         private readonly Func<ConcurrentDictionary<string, AgentInstance>> _agentsAccessor;
         private readonly IEmbeddingCache _embeddingCache;
@@ -34,7 +33,6 @@ public interface IPlayerDialogueManager
         public PlayerDialogueManager(
             IGeminiApiService apiService,
             IBeliefEngine beliefEngine,
-            IWorldEventBroadcaster broadcaster,
             MemoryEventLogger memoryLogger,
             Func<ConcurrentDictionary<string, AgentInstance>> agentsAccessor,
             IEmbeddingCache embeddingCache,
@@ -42,7 +40,6 @@ public interface IPlayerDialogueManager
         {
             _apiService = apiService;
             _beliefEngine = beliefEngine;
-            _broadcaster = broadcaster;
             _memoryLogger = memoryLogger;
             _agentsAccessor = agentsAccessor;
             _embeddingCache = embeddingCache;
@@ -83,22 +80,7 @@ public interface IPlayerDialogueManager
             var session = new PlayerDialogueSession(playerId, npcId);
             _activeSessions[session.SessionId] = session;
 
-            // 1. 대화 시작 이벤트 브로드캐스트
-            var startEvent = new WorldEvent
-            {
-                Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
-                Dialogue = new DialogueEvent
-                {
-                    TaskId = session.SessionId,
-                    AgentAId = player.NumericId,
-                    AgentBId = npc.NumericId,
-                    Location = LocationCoordinateRegistry.CreateLocationInfo(npc.Status.CurrentLocation),
-                    IsStarted = true
-                }
-            };
-            await _broadcaster.BroadcastAsync(startEvent);
-
-            // 2. Greeting 생성
+            // 1. Greeting 생성
             var rel = GetOrCreateRelationship(npc, playerId);
             // 관련 기억 및 믿음 목록 선출
             var sortedBeliefs = ComputeTopKBeliefs(npc, player);
@@ -449,36 +431,7 @@ public interface IPlayerDialogueManager
                 relNpcToPlayer.Trust = Math.Clamp(relNpcToPlayer.Trust + trustDeltaBToA, 0, 100);
                 RelationshipChangeTracker.TrackChange(npc.NumericId, player.NumericId, relNpcToPlayer.Liking, relNpcToPlayer.Trust);
 
-                // 관계 변동 브로드캐스트
-                var relEventAToB = new WorldEvent
-                {
-                    Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
-                    Relationship = new RelationshipEvent
-                {
-                    FromAgentId = player.NumericId,
-                    ToAgentId = npc.NumericId,
-                    NewLiking = relPlayerToNpc.Liking,
-                    LikingDelta = likingDeltaAToB,
-                    NewTrust = relPlayerToNpc.Trust,
-                    TrustDelta = trustDeltaAToB
-                }
-                };
-                await _broadcaster.BroadcastAsync(relEventAToB);
 
-                var relEventBToA = new WorldEvent
-                {
-                    Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
-                    Relationship = new RelationshipEvent
-                {
-                    FromAgentId = npc.NumericId,
-                    ToAgentId = player.NumericId,
-                    NewLiking = relNpcToPlayer.Liking,
-                    LikingDelta = likingDeltaBToA,
-                    NewTrust = relNpcToPlayer.Trust,
-                    TrustDelta = trustDeltaBToA
-                }
-                };
-                await _broadcaster.BroadcastAsync(relEventBToA);
 
                 // 정보(믿음) 전파 처리
                 if (analysis.BeliefsShared != null)
@@ -565,21 +518,7 @@ public interface IPlayerDialogueManager
 
                         await _beliefEngine.ProcessBeliefSharingAsync(speaker, listener, originalBelief, content);
 
-                        // 실시간 이벤트 브로드캐스트
-                        bool isMutated = !originalBelief.Content.Trim().Equals(content.Trim(), StringComparison.OrdinalIgnoreCase);
-                        var beliefEvent = new WorldEvent
-                        {
-                            Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
-                            BeliefShare = new BeliefShareEvent
-                            {
-                                SpeakerId = speaker.NumericId,
-                                ListenerId = listener.NumericId,
-                                SubjectId = AgentIdMapping.GetNumericId(originalBelief.SubjectId),
-                                Content = content,
-                                IsMutated = isMutated
-                            }
-                        };
-                        await _broadcaster.BroadcastAsync(beliefEvent);
+
                     }
                 }
 
@@ -591,29 +530,7 @@ public interface IPlayerDialogueManager
                 await _memoryLogger.LogMemoryEventAsync(logMsg);
             }
 
-            // 대화 종료 이벤트 브로드캐스트
-            var structuredLines = session.ConversationHistory.Select(m => new DialogueLine
-            {
-                SpeakerId = AgentIdMapping.GetNumericId(m.Role),
-                SpeakerName = m.Role == player.AgentId ? player.Persona.Name : npc.Persona.Name,
-                Text = m.Text
-            }).ToList();
 
-            var endEvent = new WorldEvent
-            {
-                Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
-                Dialogue = new DialogueEvent
-                {
-                    TaskId = session.SessionId,
-                    AgentAId = player.NumericId,
-                    AgentBId = npc.NumericId,
-                    Location = LocationCoordinateRegistry.CreateLocationInfo(npc.Status.CurrentLocation),
-                    IsStarted = false,
-                    Summary = summary
-                }
-            };
-            endEvent.Dialogue.Lines.AddRange(structuredLines);
-            await _broadcaster.BroadcastAsync(endEvent);
 
             // Release lock
             player.Status.IsInConversation = false;

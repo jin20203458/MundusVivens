@@ -20,12 +20,12 @@ message LocationInfo {
 
 service MundusVivensGrpc {
   rpc TriggerDialogue (TriggerDialogueRequest) returns (TriggerDialogueResponse);
+  // [미래 준비용] 유니티 클라이언트에서 특정 NPC를 클릭하여 기억(Memories) 상세 조회를 수행할 때 사용하기 위한 API.
+  // 현재는 C# ◄► C++ 구간만 구현되어 있으며, 향후 유니티 ◄► C++ 간의 TCP 브릿지 패킷(예: CS_INSPECT_NPC_MEMORIES) 추가 시 활성화할 예정.
   rpc GetAgentStatus (GetAgentStatusRequest) returns (GetAgentStatusResponse);
   rpc InjectBelief (InjectBeliefRequest) returns (InjectBeliefResponse);
   rpc ProcessWorldTick (ProcessWorldTickRequest) returns (ProcessWorldTickResponse);
 
-  // 관찰자 모드: 실시간 이벤트 스트림 구독 
-  rpc SubscribeWorldEvents (SubscribeRequest) returns (stream WorldEvent);
   // 참여자 모드: 플레이어-NPC 간 대화 상호작용 
   rpc StartPlayerDialogue (StartPlayerDialogueRequest) returns (StartPlayerDialogueResponse);
 
@@ -49,13 +49,12 @@ message TriggerDialogueRequest {
 
 message TriggerDialogueResponse {
   uint64 task_id = 1;
-  bool is_queued = 2;
-  bool completed_immediately = 3;
   string dialogue_summary = 4;
   repeated string dialogue_lines = 5;         // 디버깅용 데이터
   repeated DialogueLine structured_lines = 6; // 구조화된 대사 데이터 
   repeated AgentEmotionUpdate emotion_updates = 7; 
   repeated JobPayload next_jobs = 8; 
+  repeated string keywords = 9;               // 대화 키워드 추가
 }
 
 message GetAgentStatusRequest {
@@ -83,6 +82,7 @@ message InjectBeliefRequest {
   uint32 subject_id = 2;
   string content = 3;
   ProtoBeliefType belief_type = 4;
+  uint32 source_agent_id = 5; // 소문의 출처 에이전트 ID 추가
 }
 
 message InjectBeliefResponse {
@@ -119,68 +119,6 @@ message DialogueLine {
   uint32 speaker_id = 1;     // 화자 에이전트 ID (예: "npc_eva")
   string speaker_name = 2;   // 화자 표시 이름 (예: "에바")
   string text = 3;           // 대사 내용
-}
-
-
-message SubscribeRequest {
-  string subscriber_id = 1;
-}
-
-message WorldEvent {
-  int64 timestamp = 1;
-  oneof event {
-    DialogueEvent dialogue = 2;         // 대화 시작/진행/종료
-    MovementEvent movement = 3;         // NPC 이동
-    BeliefShareEvent belief_share = 4;   // 믿음(소문) 전파 발생
-    RelationshipEvent relationship = 5; // 관계도 변화
-    TickEvent tick = 6;                 // 틱 진행
-    AgentStatusEvent agent_status = 7;  // NPC 상태 변동 알림
-  }
-}
-
-message AgentStatusEvent {
-  uint32 agent_id = 1;
-  LocationInfo location = 2;
-  string emotion = 3;
-  string activity = 4;
-}
-
-message DialogueEvent {
-  uint64 task_id = 1;
-  uint32 agent_a_id = 2;
-  uint32 agent_b_id = 3;
-  LocationInfo location = 4;
-  repeated DialogueLine lines = 5;     // 대화 완료 시 채워짐
-  string summary = 6;
-  bool is_started = 7;                 // true=시작, false=완료
-  repeated uint32 participant_ids = 8; // 다자간 대화용 참여자 ID 목록
-}
-
-message MovementEvent {
-  uint32 agent_id = 1;
-  LocationInfo from_location = 2;
-  LocationInfo to_location = 3;
-}
-
-message BeliefShareEvent {
-  uint32 speaker_id = 1;
-  uint32 listener_id = 2;
-  uint32 subject_id = 3;
-  string content = 4;
-  bool is_mutated = 5;           
-}
-
-message RelationshipEvent {
-  uint32 from_agent_id = 1;
-  uint32 to_agent_id = 2;
-  int32 new_liking = 3;
-  int32 liking_delta = 4;
-  int32 new_trust = 5;
-  int32 trust_delta = 6;
-}
-
-message TickEvent {
-  int32 tick_number = 1;
 }
 
 message StartPlayerDialogueRequest {

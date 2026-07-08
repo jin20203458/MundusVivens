@@ -41,7 +41,6 @@ public class MundusVivensGrpcService : MundusVivensGrpc.MundusVivensGrpcBase
 {
     private readonly InteractionScheduler _scheduler;
     private readonly Func<ConcurrentDictionary<string, AgentInstance>> _agentsAccessor;
-    private readonly IWorldEventBroadcaster _broadcaster;
     private readonly IPlayerDialogueManager _playerDialogueManager;
     private readonly IDailyPlanService _dailyPlanService; // 🆕 일일 스케줄 및 성찰 서비스 추가
     private readonly IBeliefEngine _beliefEngine;
@@ -51,7 +50,6 @@ public class MundusVivensGrpcService : MundusVivensGrpc.MundusVivensGrpcBase
     public MundusVivensGrpcService(
         InteractionScheduler scheduler,
         Func<ConcurrentDictionary<string, AgentInstance>> agentsAccessor,
-        IWorldEventBroadcaster broadcaster,
         IPlayerDialogueManager playerDialogueManager,
         IDailyPlanService dailyPlanService,
         IBeliefEngine beliefEngine,
@@ -60,7 +58,6 @@ public class MundusVivensGrpcService : MundusVivensGrpc.MundusVivensGrpcBase
     {
         _scheduler = scheduler;
         _agentsAccessor = agentsAccessor;
-        _broadcaster = broadcaster;
         _playerDialogueManager = playerDialogueManager;
         _dailyPlanService = dailyPlanService;
         _beliefEngine = beliefEngine;
@@ -93,8 +90,6 @@ public class MundusVivensGrpcService : MundusVivensGrpc.MundusVivensGrpcBase
             var response = new TriggerDialogueResponse
             {
                 TaskId = result.JobId,
-                IsQueued = true,
-                CompletedImmediately = result.Success,
                 DialogueSummary = result.Summary
             };
 
@@ -133,6 +128,11 @@ public class MundusVivensGrpcService : MundusVivensGrpc.MundusVivensGrpcBase
                 }
             }
 
+            if (result.Keywords != null)
+            {
+                response.Keywords.AddRange(result.Keywords);
+            }
+
             return response;
         }
         catch (Exception ex)
@@ -141,6 +141,8 @@ public class MundusVivensGrpcService : MundusVivensGrpc.MundusVivensGrpcBase
         }
     }
 
+    // [미래 준비용] 특정 에이전트의 상세 상태 및 기억(Memories) 목록을 조회합니다.
+    // 향후 유니티 ◄► C++ 간의 TCP 브릿지 패킷(예: CS_INSPECT_NPC_MEMORIES) 추가 시 활성화하여 활용할 예정입니다.
     public override Task<GetAgentStatusResponse> GetAgentStatus(GetAgentStatusRequest request, ServerCallContext context)
     {
         var agents = _agentsAccessor();
@@ -190,6 +192,10 @@ public class MundusVivensGrpcService : MundusVivensGrpc.MundusVivensGrpcBase
             _ => BeliefType.Witnessed
         };
 
+        var sourceAgentIdStr = request.SourceAgentId != 0 
+            ? AgentIdMapping.GetStringId(request.SourceAgentId) 
+            : "ExternalGrpc";
+
         var belief = new Belief
         {
             BeliefId = $"belief_{subjectIdStr}_{Guid.NewGuid().ToString().Substring(0, 5)}",
@@ -199,7 +205,7 @@ public class MundusVivensGrpcService : MundusVivensGrpc.MundusVivensGrpcBase
             Confidence = 0.8,
             Salience = 1.0,
             EmotionalCharge = 0.5,
-            SourceAgentId = "ExternalGrpc",
+            SourceAgentId = sourceAgentIdStr,
             AcquiredAt = DateTime.UtcNow
         };
 
@@ -248,21 +254,7 @@ public class MundusVivensGrpcService : MundusVivensGrpc.MundusVivensGrpcBase
 
             Console.WriteLine($"🔄 [gRPC-Batch] 에이전트 '{agent.Persona.Name}' 상태 업데이트: 위치={agent.Status.CurrentLocation} ({agent.Status.X:0.0}, {agent.Status.Y:0.0}, {agent.Status.Z:0.0}), 감정={agent.Status.Emotion}, 행동={agent.Status.Activity}");
 
-            // 위치가 변경되었을 경우 이동 이벤트 브로드캐스트
-            if (agentReq.Location != null && !string.IsNullOrWhiteSpace(agentReq.Location.Name) && oldLocation != agentReq.Location.Name)
-            {
-                var moveEvent = new WorldEvent
-                {
-                    Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
-                    Movement = new MovementEvent
-                    {
-                        AgentId = agentReq.AgentId,
-                        FromLocation = LocationCoordinateRegistry.CreateLocationInfo(oldLocation, oldX, oldY, oldZ),
-                        ToLocation = agentReq.Location
-                    }
-                };
-                _ = _broadcaster.BroadcastAsync(moveEvent);
-            }
+
 
             updatedCount++;
         }
@@ -276,17 +268,6 @@ public class MundusVivensGrpcService : MundusVivensGrpc.MundusVivensGrpcBase
     public override Task<ProcessWorldTickResponse> ProcessWorldTick(ProcessWorldTickRequest request, ServerCallContext context)
     {
         Console.WriteLine($"⏱️ [gRPC] 월드 틱 진행 통보 수신: 틱 번호 {request.TickNumber}");
-
-        // 틱 이벤트 브로드캐스트
-        var tickEvent = new WorldEvent
-        {
-            Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
-            Tick = new TickEvent
-            {
-                TickNumber = request.TickNumber
-            }
-        };
-        _ = _broadcaster.BroadcastAsync(tickEvent);
 
         // 플레이어 잉여 세션(타임아웃) 정리 (약 2분)
         _ = _playerDialogueManager.CleanupIdleSessionsAsync(TimeSpan.FromMinutes(2), context.CancellationToken);
@@ -325,12 +306,6 @@ public class MundusVivensGrpcService : MundusVivensGrpc.MundusVivensGrpcBase
         response.RelationshipDeltas.AddRange(deltas);
 
         return Task.FromResult(response);
-    }
-
-
-    public override Task SubscribeWorldEvents(SubscribeRequest request, IServerStreamWriter<WorldEvent> responseStream, ServerCallContext context)
-    {
-        return _broadcaster.SubscribeAsync(request.SubscriberId, responseStream, context.CancellationToken);
     }
 
     public override async Task<StartPlayerDialogueResponse> StartPlayerDialogue(StartPlayerDialogueRequest request, ServerCallContext context)

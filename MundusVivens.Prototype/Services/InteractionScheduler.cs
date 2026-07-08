@@ -42,6 +42,7 @@ public class DialogueSchedulerResult
     public List<DialogueLine> StructuredLines { get; set; } = new();
     public List<AgentEmotionUpdate> EmotionUpdates { get; set; } = new(); // 🆕 감정 업데이트 추가
     public List<NextJobDto> NextJobs { get; set; } = new(); // 🆕 대화 종료 후 공동 계획 수립 결과
+    public List<string> Keywords { get; set; } = new(); // 🆕 대화 키워드 추가
 }
 
 public class InteractionScheduler : BackgroundService
@@ -51,7 +52,6 @@ public class InteractionScheduler : BackgroundService
     private readonly SemaphoreSlim _globalSemaphore;
     private readonly IDialogueOrchestrator _orchestrator;
     private readonly Func<ConcurrentDictionary<string, AgentInstance>> _agentsAccessor;
-    private readonly IWorldEventBroadcaster _broadcaster;
     private readonly IPersistenceService _persistence;
     private readonly ILogger<InteractionScheduler> _logger;
     private readonly object _lock = new();
@@ -60,14 +60,12 @@ public class InteractionScheduler : BackgroundService
     public InteractionScheduler(
         IDialogueOrchestrator orchestrator,
         Func<ConcurrentDictionary<string, AgentInstance>> agentsAccessor,
-        IWorldEventBroadcaster broadcaster,
         IPersistenceService persistence,
         ILogger<InteractionScheduler> logger,
         int maxGlobalConcurrent = 10)
     {
         _orchestrator = orchestrator;
         _agentsAccessor = agentsAccessor;
-        _broadcaster = broadcaster;
         _persistence = persistence;
         _logger = logger;
         _globalSemaphore = new SemaphoreSlim(maxGlobalConcurrent);
@@ -233,21 +231,7 @@ public class InteractionScheduler : BackgroundService
                                 otherAgent.Status.CurrentLocation = primaryAgent.Status.CurrentLocation;
                             }
 
-                            // 1. 대화 시작 이벤트 브로드캐스트
-                            var startEvent = new MundusVivens.Prototype.Protos.WorldEvent
-                            {
-                                Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
-                                Dialogue = new MundusVivens.Prototype.Protos.DialogueEvent
-                                {
-                                    TaskId = job.JobId,
-                                    AgentAId = AgentIdMapping.GetNumericId(job.ParticipantIds[0]),
-                                    AgentBId = job.ParticipantIds.Count > 1 ? AgentIdMapping.GetNumericId(job.ParticipantIds[1]) : 0,
-                                    Location = LocationCoordinateRegistry.CreateLocationInfo(primaryAgent.Status.CurrentLocation),
-                                    IsStarted = true
-                                }
-                            };
-                            startEvent.Dialogue.ParticipantIds.AddRange(job.ParticipantIds.Select(AgentIdMapping.GetNumericId));
-                            await _broadcaster.BroadcastAsync(startEvent);
+
 
                             // Run conversation: if 2 agents, use original. If more, use group
                             DialogueResult result;
@@ -269,32 +253,14 @@ public class InteractionScheduler : BackgroundService
                                 DialogueLines = result.DialogueLines,
                                 StructuredLines = result.StructuredLines,
                                 EmotionUpdates = result.EmotionUpdates,
-                                NextJobs = result.NextJobs
+                                NextJobs = result.NextJobs,
+                                Keywords = result.Keywords
                             };
 
                             _completedResults[job.JobId] = (schedulerResult, DateTime.UtcNow);
                             job.CompletionSource.TrySetResult(schedulerResult);
 
-                            // 2. 대화 완료 이벤트 브로드캐스트
-                            var endEvent = new MundusVivens.Prototype.Protos.WorldEvent
-                            {
-                                Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
-                                Dialogue = new MundusVivens.Prototype.Protos.DialogueEvent
-                                {
-                                    TaskId = job.JobId,
-                                    AgentAId = AgentIdMapping.GetNumericId(job.ParticipantIds[0]),
-                                    AgentBId = job.ParticipantIds.Count > 1 ? AgentIdMapping.GetNumericId(job.ParticipantIds[1]) : 0,
-                                    Location = LocationCoordinateRegistry.CreateLocationInfo(primaryAgent.Status.CurrentLocation),
-                                    IsStarted = false,
-                                    Summary = result.Summary
-                                }
-                            };
-                            endEvent.Dialogue.ParticipantIds.AddRange(job.ParticipantIds.Select(AgentIdMapping.GetNumericId));
-                            foreach (var line in result.StructuredLines)
-                            {
-                                endEvent.Dialogue.Lines.Add(line);
-                            }
-                            await _broadcaster.BroadcastAsync(endEvent);
+
                         }
                         catch (Exception ex)
                         {

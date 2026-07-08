@@ -63,7 +63,6 @@ public class Program
         builder.Services.AddSingleton<IWorldContextService, WorldContextService>();
         builder.Services.AddSingleton<IDialogueOrchestrator, DialogueOrchestrator>();
         builder.Services.AddSingleton<IPlayerDialogueManager, PlayerDialogueManager>();
-        builder.Services.AddSingleton<IWorldEventBroadcaster, WorldEventBroadcaster>();
         builder.Services.AddSingleton<IDailyPlanService, DailyPlanService>();
 
         // 데이터 영속성 관련 서비스 직접 인스턴스 생성 (BuildServiceProvider 경고 제거)
@@ -93,15 +92,13 @@ public class Program
         builder.Services.AddSingleton<ConcurrentDictionary<string, AgentInstance>>(agentsFromDb);
         builder.Services.AddSingleton<Func<ConcurrentDictionary<string, AgentInstance>>>(sp => () => sp.GetRequiredService<ConcurrentDictionary<string, AgentInstance>>());
 
-        // 비동기 스케줄러 등록
         builder.Services.AddSingleton<InteractionScheduler>(sp =>
         {
             var orchestrator = sp.GetRequiredService<IDialogueOrchestrator>();
             var accessor = sp.GetRequiredService<Func<ConcurrentDictionary<string, AgentInstance>>>();
-            var broadcaster = sp.GetRequiredService<IWorldEventBroadcaster>();
             var persistence = sp.GetRequiredService<IPersistenceService>();
             var logger = sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<InteractionScheduler>>();
-            return new InteractionScheduler(orchestrator, accessor, broadcaster, persistence, logger, maxGlobalConcurrent);
+            return new InteractionScheduler(orchestrator, accessor, persistence, logger, maxGlobalConcurrent);
         });
         builder.Services.AddHostedService(sp => sp.GetRequiredService<InteractionScheduler>());
 
@@ -367,40 +364,6 @@ public class Program
 
         // 1. 루트 경로 진입 시 안내
         app.MapGet("/", () => Results.Ok("Project Mundus Vivens API Server is running. Dashboard is currently offline."));
-
-        // 2. Server-Sent Events (SSE) 실시간 이벤트 스트림
-        app.MapGet("/api/events", async (HttpContext httpContext, IWorldEventBroadcaster broadcaster, CancellationToken ct) =>
-        {
-            httpContext.Response.ContentType = "text/event-stream";
-            httpContext.Response.Headers.CacheControl = "no-cache";
-            httpContext.Response.Headers.Connection = "keep-alive";
-
-            var channel = System.Threading.Channels.Channel.CreateUnbounded<WorldEvent>();
-            Action<WorldEvent> onEvent = (ev) => channel.Writer.TryWrite(ev);
-            broadcaster.OnWorldEvent += onEvent;
-
-            try
-            {
-                await httpContext.Response.WriteAsync($": welcome\n\n", ct);
-                await httpContext.Response.Body.FlushAsync(ct);
-
-                while (!ct.IsCancellationRequested)
-                {
-                    var ev = await channel.Reader.ReadAsync(ct);
-                    var json = Google.Protobuf.JsonFormatter.Default.Format(ev);
-                    await httpContext.Response.WriteAsync($"data: {json}\n\n", ct);
-                    await httpContext.Response.Body.FlushAsync(ct);
-                }
-            }
-            catch (OperationCanceledException)
-            {
-                // Normal disconnect
-            }
-            finally
-            {
-                broadcaster.OnWorldEvent -= onEvent;
-            }
-        });
 
         // 3. 플레이어 대화 제어 REST API
         app.MapPost("/api/player/dialogue/start", async (StartPlayerDialogueApiRequest req, IPlayerDialogueManager mgr, CancellationToken ct) =>

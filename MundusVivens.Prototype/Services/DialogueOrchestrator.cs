@@ -18,6 +18,7 @@ public class DialogueResult
     public List<DialogueLine> StructuredLines { get; set; } = new();
     public List<AgentEmotionUpdate> EmotionUpdates { get; set; } = new(); // 🆕 감정 업데이트 목록 추가
     public List<NextJobDto> NextJobs { get; set; } = new(); // 🆕 대화 종료 후 공동 계획 수립 결과
+    public List<string> Keywords { get; set; } = new(); // 🆕 대화 키워드 추가
 }
 
 public interface IDialogueOrchestrator
@@ -31,7 +32,6 @@ public class DialogueOrchestrator : IDialogueOrchestrator
     private readonly IGeminiApiService _apiService;
     private readonly IBeliefEngine _beliefEngine;
     private readonly MemoryEventLogger _memoryLogger;
-    private readonly IWorldEventBroadcaster _broadcaster;
     private readonly IEmbeddingCache _embeddingCache;
     private readonly IWorldContextService _worldContext;
     private readonly IPersistenceService _persistence;
@@ -40,7 +40,6 @@ public class DialogueOrchestrator : IDialogueOrchestrator
         IGeminiApiService apiService,
         IBeliefEngine beliefEngine,
         MemoryEventLogger memoryLogger,
-        IWorldEventBroadcaster broadcaster,
         IEmbeddingCache embeddingCache,
         IWorldContextService worldContext,
         IPersistenceService persistence)
@@ -48,7 +47,6 @@ public class DialogueOrchestrator : IDialogueOrchestrator
         _apiService = apiService;
         _beliefEngine = beliefEngine;
         _memoryLogger = memoryLogger;
-        _broadcaster = broadcaster;
         _embeddingCache = embeddingCache;
         _worldContext = worldContext;
         _persistence = persistence;
@@ -278,6 +276,8 @@ public class DialogueOrchestrator : IDialogueOrchestrator
    - 대화 내용에서 두 에이전트가 무언가 함께하기로 합의했다면(예: 술을 마시러 술집으로 가자고 함), target_location을 반드시 동일하게 일치시키십시오.
    - target_location은 반드시 아래 [이동 가능한 장소 목록] 중 하나여야 합니다.
    - activity는 그 장소에서 할 구체적인 행동(예: "대장간에서 철광석 제련 작업을 이어서 한다" 또는 "술집으로 이동해 함께 술을 마신다")이어야 합니다.
+7. keywords (대화 핵심 키워드):
+   - 이 대화의 주제를 나타내는 핵심 명사 위주의 키워드를 3개 추출하십시오. (예: ["에바", "식량 창고", "야밤"])
 
 [이동 가능한 장소 목록]
 - 영주 저택 (Manor)
@@ -312,6 +312,8 @@ public class DialogueOrchestrator : IDialogueOrchestrator
   "next_jobs": [
     { "agent_id": "npc_eva", "target_location": "술집 (Tavern)", "activity": "Bart와 술집에서 술을 마시며 이야기를 나눈다" },
     { "agent_id": "npc_bart", "target_location": "술집 (Tavern)", "activity": "Eva와 술집에서 술을 마시며 이야기를 나눈다" }
+  ],
+  "keywords": ["키워드1", "키워드2", "키워드3"]
 }
 </output_format>
 """;
@@ -352,24 +354,7 @@ public class DialogueOrchestrator : IDialogueOrchestrator
             };
             structuredLines.Add(sLine);
 
-            if (taskId != 0)
-            {
-                var liveEvent = new WorldEvent
-                {
-                    Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
-                    Dialogue = new DialogueEvent
-                    {
-                        TaskId = taskId,
-                        AgentAId = participants[0].NumericId,
-                        AgentBId = participants.Count > 1 ? participants[1].NumericId : 0,
-                        Location = LocationCoordinateRegistry.CreateLocationInfo(participants[0].Status.CurrentLocation),
-                        IsStarted = true
-                    }
-                };
-                liveEvent.Dialogue.ParticipantIds.AddRange(participants.Select(p => p.NumericId));
-                liveEvent.Dialogue.Lines.Add(sLine);
-                await _broadcaster.BroadcastAsync(liveEvent);
-            }
+
 
             // Artificially delay a tiny bit so clients can render speech bubbles sequentially
             await Task.Delay(1000, cancellationToken);
@@ -432,21 +417,7 @@ public class DialogueOrchestrator : IDialogueOrchestrator
 
                 Console.WriteLine($"   * {fromAgent.Persona.Name} ➔ {toAgent.Persona.Name}: 호감도 {rel.Liking} ({rc.LikingDelta:+#;-#;0}), 신뢰도 {rel.Trust} ({rc.TrustDelta:+#;-#;0})");
 
-                // Broadcast relationship change
-                var relEvent = new WorldEvent
-                {
-                    Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
-                    Relationship = new RelationshipEvent
-                    {
-                        FromAgentId = fromAgent.NumericId,
-                        ToAgentId = toAgent.NumericId,
-                        NewLiking = rel.Liking,
-                        LikingDelta = rc.LikingDelta,
-                        NewTrust = rel.Trust,
-                        TrustDelta = rc.TrustDelta
-                    }
-                };
-                await _broadcaster.BroadcastAsync(relEvent);
+
             }
         }
 
@@ -532,22 +503,6 @@ public class DialogueOrchestrator : IDialogueOrchestrator
 
                     await _beliefEngine.ProcessBeliefSharingAsync(speaker, listener, originalBelief, content);
 
-                    // Broadcast belief sharing event
-                    bool isMutated = !originalBelief.Content.Trim().Equals(content.Trim(), StringComparison.OrdinalIgnoreCase);
-                    var beliefEvent = new WorldEvent
-                    {
-                        Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
-                        BeliefShare = new BeliefShareEvent
-                        {
-                            SpeakerId = speaker.NumericId,
-                            ListenerId = listener.NumericId,
-                            SubjectId = AgentIdMapping.GetNumericId(originalBelief.SubjectId),
-                            Content = content,
-                            IsMutated = isMutated
-                        }
-                    };
-                    await _broadcaster.BroadcastAsync(beliefEvent);
-
                     // 기록용 에이전트 로그 남기기
                     string beliefLog = $"믿음/소문 유통 ({speaker.Persona.Name} ➔ {listener.Persona.Name}): 대상={originalBelief.SubjectId}, 내용=\"{content}\"";
                     await _memoryLogger.LogMemoryEventAsync(beliefLog);
@@ -587,7 +542,8 @@ public class DialogueOrchestrator : IDialogueOrchestrator
             DialogueLines = lines,
             StructuredLines = structuredLines,
             EmotionUpdates = emotionUpdatesList,
-            NextJobs = analysis.NextJobs ?? new()
+            NextJobs = analysis.NextJobs ?? new(),
+            Keywords = analysis.Keywords ?? new()
         };
     }
 

@@ -178,6 +178,9 @@ public class GroupConversationScript
 
     [JsonPropertyName("next_jobs")]
     public List<NextJobDto> NextJobs { get; set; } = new();
+
+    [JsonPropertyName("keywords")]
+    public List<string> Keywords { get; set; } = new();
 }
 
 public class NextJobDto
