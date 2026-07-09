@@ -69,6 +69,10 @@ public class Program
         var persistenceService = new PersistenceService();
         // [Smell #5 해결] 시뮬레이션 설정 파일 로드
         var settingsPath = Path.Combine(Directory.GetCurrentDirectory(), "shared_simulation_settings.json");
+        if (!File.Exists(settingsPath))
+        {
+            settingsPath = Path.Combine(Directory.GetParent(Directory.GetCurrentDirectory())?.FullName ?? "", "shared_simulation_settings.json");
+        }
         LocationCoordinateRegistry.LoadSettings(settingsPath);
 
         var staticDataLoader = new StaticDataLoader();
