@@ -50,11 +50,12 @@ message TriggerDialogueRequest {
 message TriggerDialogueResponse {
   uint64 task_id = 1;
   string dialogue_summary = 4;
-  repeated string dialogue_lines = 5;         // 디버깅용 데이터
   repeated DialogueLine structured_lines = 6; // 구조화된 대사 데이터 
   repeated AgentEmotionUpdate emotion_updates = 7; 
   repeated JobPayload next_jobs = 8; 
   repeated string keywords = 9;               // 대화 키워드 추가
+  bool success = 10;                          // 🆕 대화 성공 여부
+  string error_message = 11;                  // 🆕 에러 메시지
 }
 
 message GetAgentStatusRequest {

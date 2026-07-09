@@ -73,14 +73,14 @@ public class MundusVivensGrpcService : MundusVivensGrpc.MundusVivensGrpcBase
             if (request.ParticipantIds.Count > 0)
             {
                 var stringIds = request.ParticipantIds.Select(AgentIdMapping.GetStringId).ToList();
-                result = await _scheduler.QueueGroupDialogueJobAsync(
+                result = await _scheduler.QueueGroupDialogueTaskAsync(
                     stringIds,
                     context.CancellationToken
                 );
             }
             else
             {
-                result = await _scheduler.QueueDialogueJobAsync(
+                result = await _scheduler.QueueDialogueTaskAsync(
                     AgentIdMapping.GetStringId(request.AgentIdA),
                     AgentIdMapping.GetStringId(request.AgentIdB),
                     context.CancellationToken
@@ -89,14 +89,12 @@ public class MundusVivensGrpcService : MundusVivensGrpc.MundusVivensGrpcBase
 
             var response = new TriggerDialogueResponse
             {
-                TaskId = result.JobId,
-                DialogueSummary = result.Summary
+                TaskId = result.TaskId,
+                DialogueSummary = result.Summary,
+                Success = result.Success,
+                ErrorMessage = result.ErrorMessage
             };
 
-            if (result.DialogueLines != null)
-            {
-                response.DialogueLines.AddRange(result.DialogueLines);
-            }
 
             if (result.StructuredLines != null)
             {
@@ -449,7 +447,7 @@ public class MundusVivensGrpcService : MundusVivensGrpc.MundusVivensGrpcBase
         return Task.FromResult(response);
     }
 
-    private static long _globalJobIdSequence = 1000;
+    private static long _globalJobIdSequence = 100000000;
     public static ulong GenerateNextJobId() => (ulong)System.Threading.Interlocked.Increment(ref _globalJobIdSequence);
 
     public override Task<GetPendingJobsResponse> GetPendingJobs(GetPendingJobsRequest request, ServerCallContext context)

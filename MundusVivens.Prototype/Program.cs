@@ -263,7 +263,7 @@ public class Program
             ConcurrentDictionary<string, AgentInstance> agents,
             CancellationToken ct) =>
         {
-            var result = await scheduler.QueueDialogueJobAsync(request.AgentIdA, request.AgentIdB, ct);
+            var result = await scheduler.QueueDialogueTaskAsync(request.AgentIdA, request.AgentIdB, ct);
             
             if (!result.Success)
             {
@@ -272,35 +272,33 @@ public class Program
 
             return Results.Ok(new
             {
-                result.JobId,
+                result.TaskId,
                 Status = "Completed",
                 result.Summary,
-                result.DialogueLines,
                 result.StructuredLines,
                 result.EmotionUpdates
             });
         });
 
         // 완료된 대화 결과 조회 (REST API 방식)
-        app.MapGet("/api/interaction/result/{jobId}", (ulong jobId, InteractionScheduler scheduler) =>
+        app.MapGet("/api/interaction/result/{taskId}", (ulong taskId, InteractionScheduler scheduler) =>
         {
-            if (scheduler.TryGetCompletedResult(jobId, out var result) && result != null)
+            if (scheduler.TryGetCompletedResult(taskId, out var result) && result != null)
             {
                 return Results.Ok(new
                 {
-                    result.JobId,
+                    result.TaskId,
                     Status = result.Success ? "Completed" : "Failed",
                     result.Success,
                     result.ErrorMessage,
                     result.Summary,
-                    result.DialogueLines,
                     result.StructuredLines
                 });
             }
 
             return Results.Ok(new
             {
-                JobId = jobId,
+                TaskId = taskId,
                 Status = "Processing",
                 Message = "대화가 아직 진행 중이거나 큐에서 대기 중입니다."
             });
@@ -309,7 +307,7 @@ public class Program
         // 현재 대기 중이거나 진행 중인 작업 조회
         app.MapGet("/api/interaction/active", (InteractionScheduler scheduler) =>
         {
-            return Results.Ok(scheduler.GetActiveAndPendingJobs());
+            return Results.Ok(scheduler.GetActiveAndPendingTasks());
         });
 
         // 토큰 실시간 통계 조회
