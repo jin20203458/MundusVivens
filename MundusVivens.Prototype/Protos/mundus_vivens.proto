@@ -182,6 +182,8 @@ message GetWorldBootstrapResponse {
   repeated LocationInfo locations = 1;
   repeated InitialAgentState agents = 2;
   repeated FurnitureInfo furniture = 3;
+  float npc_speed = 4;
+  uint32 ticks_per_game_hour = 5;
 }
 
 enum ProtoLocationType {

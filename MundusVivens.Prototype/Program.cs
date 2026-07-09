@@ -67,6 +67,10 @@ public class Program
 
         // 데이터 영속성 관련 서비스 직접 인스턴스 생성 (BuildServiceProvider 경고 제거)
         var persistenceService = new PersistenceService();
+        // [Smell #5 해결] 시뮬레이션 설정 파일 로드
+        var settingsPath = Path.Combine(Directory.GetCurrentDirectory(), "shared_simulation_settings.json");
+        LocationCoordinateRegistry.LoadSettings(settingsPath);
+
         var staticDataLoader = new StaticDataLoader();
         builder.Services.AddSingleton<IPersistenceService>(persistenceService);
         builder.Services.AddSingleton<StaticDataLoader>(staticDataLoader);

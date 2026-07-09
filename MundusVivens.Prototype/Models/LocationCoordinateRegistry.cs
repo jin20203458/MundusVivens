@@ -11,6 +11,41 @@ public static class LocationCoordinateRegistry
     private static Dictionary<string, (float X, float Y, float Z)> _semanticToCoords = new(StringComparer.OrdinalIgnoreCase);
     private static List<LocationConfig> _configs = new();
 
+    public static float NpcSpeed { get; private set; } = 2.0f;
+    public static int TicksPerGameHour { get; private set; } = 200;
+
+    public static void LoadSettings(string settingsPath)
+    {
+        lock (_lock)
+        {
+            if (!System.IO.File.Exists(settingsPath))
+            {
+                Console.WriteLine($"[Warning] settings file not found at: {settingsPath}. Using defaults (Speed: 2.0, Ticks/Hour: 200).");
+                return;
+            }
+
+            try
+            {
+                var json = System.IO.File.ReadAllText(settingsPath);
+                using var doc = System.Text.Json.JsonDocument.Parse(json);
+                var root = doc.RootElement;
+                if (root.TryGetProperty("NPC_SPEED", out var speedProp))
+                {
+                    NpcSpeed = (float)speedProp.GetDouble();
+                }
+                if (root.TryGetProperty("TICKS_PER_GAME_HOUR", out var ticksProp))
+                {
+                    TicksPerGameHour = ticksProp.GetInt32();
+                }
+                Console.WriteLine($"⚙️ [Settings] Loaded shared_simulation_settings.json: NPC_SPEED = {NpcSpeed}, TICKS_PER_GAME_HOUR = {TicksPerGameHour}");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[Settings Error] Failed to parse settings file: {ex.Message}");
+            }
+        }
+    }
+
     public static void Initialize(IEnumerable<LocationConfig> configs)
     {
         lock (_lock)
@@ -85,11 +120,6 @@ public static class LocationCoordinateRegistry
         }
     }
 
-    public static List<string> GetLodLocationList(string currentPlaceName)
-    {
-        var coords = GetCoordinates(currentPlaceName);
-        return GetLodLocationList(coords.X, coords.Z);
-    }
 
     public static List<string> GetLodLocationList(float ax, float az)
     {
@@ -400,10 +430,11 @@ public static class LocationCoordinateRegistry
         double dz = az - bz;
         double distance = Math.Sqrt(dx * dx + dy * dy + dz * dz);
 
-        // NPC speed = 2.0 m/s
-        // 1 game hour = 200 physics ticks = 10 real-world seconds
-        // Therefore, 1 game hour travel distance = 2.0 m/s * 10s = 20.0 meters.
-        double hours = distance / 20.0;
+        // NPC speed = NpcSpeed m/s
+        // 1 game hour = TicksPerGameHour physics ticks (1 tick = 0.05s)
+        // Therefore, 1 game hour travel distance = NpcSpeed * (TicksPerGameHour * 0.05)
+        double oneHourTravelDistance = NpcSpeed * (TicksPerGameHour * 0.05);
+        double hours = distance / oneHourTravelDistance;
         return (int)Math.Max(1, Math.Round(hours));
     }
 
@@ -437,7 +468,8 @@ public static class LocationCoordinateRegistry
         // 도착 기준 거리: 테두리 경계선과 1.5미터 이하
         if (distance < 1.5) return 0;
 
-        double hours = distance / 20.0;
+        double oneHourTravelDistance = NpcSpeed * (TicksPerGameHour * 0.05);
+        double hours = distance / oneHourTravelDistance;
         return (int)Math.Max(1, Math.Round(hours));
     }
 }

@@ -443,6 +443,9 @@ public class MundusVivensGrpcService : MundusVivensGrpc.MundusVivensGrpcBase
             }
         }
 
+        response.NpcSpeed = LocationCoordinateRegistry.NpcSpeed;
+        response.TicksPerGameHour = (uint)LocationCoordinateRegistry.TicksPerGameHour;
+
         return Task.FromResult(response);
     }
 

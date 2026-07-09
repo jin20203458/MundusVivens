@@ -45,6 +45,11 @@ public class PersistenceService : IPersistenceService, IDisposable
             {
                 _database = new LiteDatabase(_dbPath);
                 Console.WriteLine($"[Persistence] Database initialized at: {_dbPath}");
+
+                // AgentId 인덱스 생성 (RecallBeliefs 성능 최적화)
+                var col = _database.GetCollection<ArchivedBelief>("cold_archive");
+                col.EnsureIndex(x => x.AgentId);
+                Console.WriteLine("[Persistence] cold_archive에 AgentId 인덱스 적용 완료.");
             }
             catch (Exception ex)
             {
@@ -205,7 +210,11 @@ public class PersistenceService : IPersistenceService, IDisposable
                     Belief = belief
                 };
                 col.Upsert(archived);
-                Console.WriteLine($"[Persistence] 📁 Archived evicted belief '{belief.Content}' for {agentId}");
+                
+                int currentArchiveCount = col.Count(x => x.AgentId == agentId);
+                Console.WriteLine($"📥 [기억 Eviction 발생] 에이전트: {agentId} | 핫 메모리 쇠퇴 ➔ Cold Archive 이관");
+                Console.WriteLine($"   - 이관 기억 내용: \"{belief.Content}\" (중요도: {belief.Importance})");
+                Console.WriteLine($"   - Cold 데이터베이스 아카이브 크기: {currentArchiveCount}개");
             }
             catch (Exception ex)
             {
@@ -221,15 +230,17 @@ public class PersistenceService : IPersistenceService, IDisposable
             if (_database == null) InitializeDatabase();
             try
             {
+                var stopwatch = System.Diagnostics.Stopwatch.StartNew();
                 var col = _database!.GetCollection<ArchivedBelief>("cold_archive");
                 
-                // 1. 해당 에이전트의 보관된 기억 쿼리
-                var query = col.Query().Where(x => x.AgentId == agentId);
-                var list = query.ToList();
+                // 1. 해당 에이전트의 보관된 기억 쿼리 (인덱스 활용 lazy cursor)
+                var query = col.Find(x => x.AgentId == agentId);
+                int totalScanned = 0;
 
-                // 2. 가중치 매칭 스코어 계산
-                var scored = list.Select(ab =>
+                // 2. 가중치 매칭 스코어 계산 (지연 연산)
+                var scored = query.Select(ab =>
                 {
+                    totalScanned++;
                     double score = 0.0;
 
                     // 대상(인물) 매칭 가중치
@@ -274,6 +285,9 @@ public class PersistenceService : IPersistenceService, IDisposable
                 .Take(limit)
                 .Select(x => x.Archived.Belief)
                 .ToList();
+
+                stopwatch.Stop();
+                Console.WriteLine($"⏱️ [기억 회상 프로파일러] Agent: {agentId} | 스캔한 기억 개수: {totalScanned}개 | 최종 채택: {scored.Count}개 | 소요 시간: {stopwatch.ElapsedMilliseconds} ms");
 
                 return scored;
             }
