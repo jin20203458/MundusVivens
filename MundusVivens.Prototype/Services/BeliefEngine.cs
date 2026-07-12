@@ -13,6 +13,7 @@ public interface IBeliefEngine
     Task ProcessBeliefSharingAsync(AgentInstance speaker, AgentInstance listener, Belief originalBelief, string sharedContent);
     void DecayBeliefs(AgentInstance agent, int currentTick);
     void PropagateCausalCascade(AgentInstance agent, string parentBeliefId);
+    Task ProcessCombatEventAsync(AgentInstance attacker, AgentInstance victim, float damage, string weapon);
 }
 
 public class BeliefEngine : IBeliefEngine
@@ -256,5 +257,46 @@ public class BeliefEngine : IBeliefEngine
             // Recursively propagate
             PropagateCausalCascade(agent, child.BeliefId);
         }
+    }
+
+    // 🆕 4단계: 피격 시 트라우마 메모리 생성 및 관계 대폭 하락
+    public async Task ProcessCombatEventAsync(AgentInstance attacker, AgentInstance victim, float damage, string weapon)
+    {
+        string eventContent = $"I was attacked by {attacker.Persona.Name} with {weapon} and took {damage} damage.";
+        float[] embedding = await GetOrComputeEmbeddingHelperAsync(eventContent);
+
+        // 1. 트라우마 기억 생성
+        var traumaBelief = new Belief
+        {
+            BeliefId = "combat_" + Guid.NewGuid().ToString("N"),
+            SubjectId = victim.AgentId,
+            Content = eventContent,
+            ContentEmbedding = embedding,
+            Type = BeliefType.Witnessed, // 본인이 직접 경험한 사실
+            Confidence = 1.0,
+            Salience = 1.0,              // 선명도 최상
+            EmotionalCharge = 1.0,       // 트라우마적 감정 상태
+            SourceAgentId = attacker.AgentId,
+            AcquiredAt = DateTime.UtcNow
+        };
+
+        victim.MemoryBox.AddOrUpdateBelief(traumaBelief);
+        Console.WriteLine($"[BeliefEngine] 🩹 [트라우마 기억 형성] NPC '{victim.Persona.Name}'가 '{attacker.Persona.Name}'에게 공격당해 상처를 입었습니다.");
+
+        // 2. 가해자에 대한 관계성 대폭 악화 (호감도 Liking -30, 신뢰도 Trust -40)
+        var relationship = victim.RelationshipMap.AddOrUpdate(
+            attacker.AgentId,
+            _ => new Relationship { TargetAgentId = attacker.AgentId, Liking = -30, Trust = 10 },
+            (_, existing) =>
+            {
+                existing.Liking = Math.Max(-100, existing.Liking - 30);
+                existing.Trust = Math.Max(-100, existing.Trust - 40);
+                return existing;
+            }
+        );
+
+        // 3. 관계성 변동 정보를 TrackChange에 푸시하여 다음 틱에 C++ 서버로 동기화하도록 유도
+        RelationshipChangeTracker.TrackChange(victim.NumericId, attacker.NumericId, relationship.Liking, relationship.Trust);
+        Console.WriteLine($"[BeliefEngine] 👿 [적대화 완료] '{victim.Persona.Name}' -> '{attacker.Persona.Name}' 관계성 악화 (Liking: {relationship.Liking}, Trust: {relationship.Trust})");
     }
 }
