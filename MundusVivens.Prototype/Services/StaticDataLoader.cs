@@ -190,7 +190,6 @@ public class StaticDataLoader
         public string Subject { get; set; } = string.Empty;
         public string Content { get; set; } = string.Empty;
         public string SourceAgentId { get; set; } = string.Empty;
-        public int BaseCredibility { get; set; }
         public int MutationCount { get; set; }
     }
 }

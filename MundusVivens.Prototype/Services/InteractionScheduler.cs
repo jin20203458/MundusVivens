@@ -337,4 +337,64 @@ public class InteractionScheduler : BackgroundService
             }
         }
     }
+
+    // 🆕 4단계: 적대 억제 및 행동 분기 결정 확률 모델
+    public async Task<int> DetermineThreatActionAsync(AgentInstance agent, AgentInstance threatAgent)
+    {
+        _logger.LogInformation($"[ThreatInhibitor] NPC '{agent.Persona.Name}'가 '{threatAgent.Persona.Name}'를 감지하고 충동 억제를 시도합니다.");
+
+        // 1. 관계 확인
+        int liking = 0;
+        int trust = 50;
+        if (agent.RelationshipMap.TryGetValue(threatAgent.AgentId, out var rel))
+        {
+            liking = rel.Liking;
+            trust = rel.Trust;
+        }
+
+        // 2. 성격 지표 (외향성 Extroversion -> 공격적/다혈질 성향으로 활용)
+        double aggressiveness = agent.Persona.Extroversion;
+
+        // 3. 누적 트라우마(공격당한 기억) 검색
+        bool hasTrauma = agent.MemoryBox.Beliefs.Values.Any(b => b.SourceAgentId == threatAgent.AgentId && b.EmotionalCharge > 0.7);
+
+        // 4. 위협 분석 점수 (Aggression Score)
+        double attackWeight = 0.0;
+        
+        if (liking < 0) attackWeight += Math.Abs(liking) * 0.5; // 최대 +50
+        if (trust < 30) attackWeight += (50 - trust) * 0.4;    // 최대 +20
+        attackWeight += aggressiveness * 30.0;                 // 최대 +30
+        if (hasTrauma) attackWeight += 40.0;                   // 보복 심리 +40
+
+        _logger.LogInformation($"[ThreatInhibitor] '{agent.Persona.Name}' -> '{threatAgent.Persona.Name}' 위협 수치: {attackWeight:F1}");
+
+        // 결정 분기:
+        // 가중치 70 이상: APPROVE = 0 (즉시 무기 드로우 선제공격)
+        // 가중치 30 ~ 70: SOCIALIZE = 2 (소셜 위협 대화 - 욕설/언쟁)
+        // 가중치 30 미만: REJECT = 1 (억제 유지 - 회피/침묵)
+        
+        if (attackWeight >= 70.0)
+        {
+            _logger.LogInformation($"[ThreatInhibitor] '{agent.Persona.Name}'가 이성을 잃고 공격(APPROVE)을 승인합니다.");
+            return 0; // APPROVE
+        }
+        else if (attackWeight >= 30.0)
+        {
+            _logger.LogInformation($"[ThreatInhibitor] '{agent.Persona.Name}'가 말싸움(SOCIALIZE)을 결심합니다.");
+            
+            // 소셜 위협(시비) 대화 Task를 백그라운드 DialogueQueue에 삽입
+            _ = Task.Run(async () =>
+            {
+                await Task.Delay(200); 
+                await QueueDialogueTaskAsync(agent.AgentId, threatAgent.AgentId);
+            });
+
+            return 2; // SOCIALIZE
+        }
+        else
+        {
+            _logger.LogInformation($"[ThreatInhibitor] '{agent.Persona.Name}'가 위협을 억제하고 회피(REJECT)합니다.");
+            return 1; // REJECT
+        }
+    }
 }

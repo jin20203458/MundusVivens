@@ -87,6 +87,20 @@
       "Aliases": ["제국 광장", "제국광장"],
       "Coordinates": { "X": 1350.0, "Y": 0.0, "Z": 1350.0 },
       "Furniture": []
+    },
+    {
+      "SemanticName": "늑대 서식지 (Wolf Nest)",
+      "Type": "Place",
+      "Aliases": ["늑대 서식지", "wolf nest"],
+      "Coordinates": { "X": 45.0, "Y": 0.0, "Z": 20.0 },
+      "Furniture": []
+    },
+    {
+      "SemanticName": "고블린 초소 (Goblin Outpost)",
+      "Type": "Place",
+      "Aliases": ["고블린 초소", "goblin outpost"],
+      "Coordinates": { "X": 15.0, "Y": 0.0, "Z": 30.0 },
+      "Furniture": []
     }
   ],
   "Agents": [
@@ -144,7 +158,7 @@
       },
       "InitialSchedule": [
         { "StartHour": 0, "EndHour": 8, "TargetLocation": "성당 (Church)", "Activity": "취침 및 기도" },
-        { "StartHour": 8, "EndHour": 12, "TargetLocation": "성당 (Church)", "Activity": "성수 관리" },
+        { "StartHour": 8, "EndHour": 12, "TargetLocation": "술집 (Tavern)", "Activity": "이교도 관찰" },
         { "StartHour": 12, "EndHour": 16, "TargetLocation": "광장 (Square)", "Activity": "마을 포교 및 정화" }
       ]
     },
@@ -213,10 +227,54 @@
       ]
     },
     {
+      "AgentId": "npc_wolf",
+      "Persona": {
+        "Name": "굶주린 늑대",
+        "Job": "야생 야수",
+        "ToneStyle": "으르렁거림",
+        "Backstory": "먹이를 찾아 술집 뒷골목까지 흘러들어온 굶주린 야생 늑대입니다.",
+        "CoreValues": "생존, 포식",
+        "Extroversion": 0.1,
+        "Faction": "Wolf",
+        "LongTermGoal": "배를 채우는 것",
+        "CurrentDrive": "근처의 인간 사냥"
+      },
+      "Status": {
+        "CurrentLocation": "늑대 서식지 (Wolf Nest)",
+        "Emotion": "적대",
+        "Activity": "사냥감 물색"
+      },
+      "InitialSchedule": [
+        { "StartHour": 0, "EndHour": 24, "TargetLocation": "술집 (Tavern)", "Activity": "배회 및 습격" }
+      ]
+    },
+    {
+      "AgentId": "npc_goblin",
+      "Persona": {
+        "Name": "약탈자 고블린",
+        "Job": "고블린 정찰병",
+        "ToneStyle": "날카롭고 간사한 목소리",
+        "Backstory": "근처 숲에서 영역을 지키는 지능이 있는 고블린입니다.",
+        "CoreValues": "영역 수호, 반짝이는 보석",
+        "Extroversion": 0.5,
+        "Faction": "Goblin",
+        "LongTermGoal": "반짝이는 금화 수집",
+        "CurrentDrive": "침입자 위협 및 협상"
+      },
+      "Status": {
+        "CurrentLocation": "고블린 초소 (Goblin Outpost)",
+        "Emotion": "평온",
+        "Activity": "대기"
+      },
+      "InitialSchedule": [
+        { "StartHour": 0, "EndHour": 24, "TargetLocation": "술집 (Tavern)", "Activity": "순찰" }
+      ]
+    },
+    {
       "AgentId": "player",
       "Persona": {
         "Name": "플레이어",
-        "Job": "여행자",
+        "Job": "旅行자",
         "ToneStyle": "자유로운 말투",
         "Backstory": "가상 세계를 탐험하며 주민들의 비밀을 파헤치는 이방인입니다.",
         "CoreValues": "호기심, 진실 규명",
@@ -238,14 +296,18 @@
     { "SourceAgentId": "npc_kyle", "TargetAgentId": "npc_eva", "Liking": 30, "Trust": 60 },
     { "SourceAgentId": "npc_eva", "TargetAgentId": "npc_valac", "Liking": -10, "Trust": 30 },
     { "SourceAgentId": "npc_valac", "TargetAgentId": "npc_eva", "Liking": 5, "Trust": 25 },
-    { "SourceAgentId": "npc_kyle", "TargetAgentId": "npc_valac", "Liking": -30, "Trust": 15 },
-    { "SourceAgentId": "npc_valac", "TargetAgentId": "npc_kyle", "Liking": 10, "Trust": 40 },
+    { "SourceAgentId": "npc_kyle", "TargetAgentId": "npc_valac", "Liking": -80, "Trust": 0 },
+    { "SourceAgentId": "npc_valac", "TargetAgentId": "npc_kyle", "Liking": -70, "Trust": 10 },
     { "SourceAgentId": "npc_eva", "TargetAgentId": "player", "Liking": 15, "Trust": 50 },
     { "SourceAgentId": "npc_kyle", "TargetAgentId": "player", "Liking": 0, "Trust": 50 },
     { "SourceAgentId": "npc_valac", "TargetAgentId": "player", "Liking": -5, "Trust": 30 },
     { "SourceAgentId": "npc_marco", "TargetAgentId": "npc_eva", "Liking": 20, "Trust": 50 },
     { "SourceAgentId": "npc_eva", "TargetAgentId": "npc_marco", "Liking": 20, "Trust": 45 },
-    { "SourceAgentId": "npc_marco", "TargetAgentId": "player", "Liking": 10, "Trust": 50 }
+    { "SourceAgentId": "npc_marco", "TargetAgentId": "player", "Liking": 10, "Trust": 50 },
+    { "SourceAgentId": "npc_goblin", "TargetAgentId": "player", "Liking": -60, "Trust": 10 },
+    { "SourceAgentId": "player", "TargetAgentId": "npc_goblin", "Liking": -60, "Trust": 10 },
+    { "SourceAgentId": "npc_goblin", "TargetAgentId": "npc_eva", "Liking": -60, "Trust": 10 },
+    { "SourceAgentId": "npc_eva", "TargetAgentId": "npc_goblin", "Liking": -60, "Trust": 10 }
   ],
   "SeedGossips": [
     {

@@ -770,6 +770,52 @@ public class MundusVivensGrpcService : MundusVivensGrpc.MundusVivensGrpcBase
     {
         return LocationCoordinateRegistry.ParseLocation(rawLocation);
     }
+
+    // 🆕 4단계: 충동-억제 어그로 위협 인지 및 처리 RPC
+    public override async Task<ThreatDetectedResponse> ThreatDetected(ThreatDetectedRequest request, ServerCallContext context)
+    {
+        var agents = _agentsAccessor();
+        var agentId = AgentIdMapping.GetStringId(request.AgentId);
+        var targetId = AgentIdMapping.GetStringId(request.TargetAgentId);
+
+        if (agents.TryGetValue(agentId, out var agent) && agents.TryGetValue(targetId, out var targetAgent))
+        {
+            var action = await _scheduler.DetermineThreatActionAsync(agent, targetAgent);
+            return new ThreatDetectedResponse
+            {
+                Action = (ThreatDetectedResponse.Types.ThreatAction)(int)action
+            };
+        }
+
+        // 에이전트를 찾을 수 없다면 기본 억제(REJECT) 처리
+        return new ThreatDetectedResponse
+        {
+            Action = ThreatDetectedResponse.Types.ThreatAction.Reject
+        };
+    }
+
+    // 🆕 4단계: 물리 타격 이벤트 보고 및 트라우마/관계 반영 RPC
+    public override async Task<ReportCombatEventResponse> ReportCombatEvent(ReportCombatEventRequest request, ServerCallContext context)
+    {
+        var agents = _agentsAccessor();
+        var attackerId = AgentIdMapping.GetStringId(request.AttackerId);
+        var victimId = AgentIdMapping.GetStringId(request.VictimId);
+
+        try
+        {
+            if (agents.TryGetValue(attackerId, out var attacker) && agents.TryGetValue(victimId, out var victim))
+            {
+                await _beliefEngine.ProcessCombatEventAsync(attacker, victim, request.Damage, request.Weapon);
+                return new ReportCombatEventResponse { Success = true };
+            }
+            return new ReportCombatEventResponse { Success = false };
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[Error in ReportCombatEvent] {ex.Message}");
+            return new ReportCombatEventResponse { Success = false };
+        }
+    }
 }
 
 public record DynamicReplanResponse(
