@@ -39,6 +39,10 @@ service MundusVivensGrpc {
   // Axis 2: Job 및 Interrupt 관리 RPC
   rpc GetPendingJobs (GetPendingJobsRequest) returns (GetPendingJobsResponse);
   rpc ReportJobStatus (ReportJobStatusRequest) returns (ReportJobStatusResponse);
+
+  // 4단계: 충동-억제 기반 어그로 인지 및 피격 알림 RPC
+  rpc ThreatDetected (ThreatDetectedRequest) returns (ThreatDetectedResponse);
+  rpc ReportCombatEvent (ReportCombatEventRequest) returns (ReportCombatEventResponse);
 }
 
 message TriggerDialogueRequest {
@@ -218,6 +222,7 @@ enum ProtoJobCategory {
   JOB_CATEGORY_WORK = 4;
   JOB_CATEGORY_TRAVEL = 5;
   JOB_CATEGORY_SURVIVAL = 6;
+  JOB_CATEGORY_COMBAT = 7;
 }
 
 enum ProtoAffordanceType {
@@ -278,6 +283,8 @@ message NpcSnapshot {
   string emotion = 4;
   string activity = 5;
   Vector3 velocity = 6;
+  float hp = 7;
+  float max_hp = 8;
 }
 
 // SC_WORLD_SNAPSHOT 페이로드
@@ -372,4 +379,34 @@ message ReportJobStatusResponse {
   bool success = 1;
   string message = 2;
   JobPayload new_job = 3; // 인터럽트 후 즉시 새 Job이 할당되었을 때
+}
+
+// ============================================================
+// 4단계: 충동-억제 전투 모델용 메시지 정의
+// ============================================================
+
+message ThreatDetectedRequest {
+  uint32 agent_id = 1;
+  uint32 target_agent_id = 2;
+  int32 aggro_score = 3;
+}
+
+message ThreatDetectedResponse {
+  enum ThreatAction {
+    APPROVE = 0;      // 즉시 공격 승인
+    REJECT = 1;       // 억제 유지 (대기/도주 등)
+    SOCIALIZE = 2;    // 소셜 위협(대화/시비)으로 전환
+  }
+  ThreatAction action = 1;
+}
+
+message ReportCombatEventRequest {
+  uint32 attacker_id = 1;
+  uint32 victim_id = 2;
+  float damage = 3;
+  string weapon = 4;
+}
+
+message ReportCombatEventResponse {
+  bool success = 1;
 }
