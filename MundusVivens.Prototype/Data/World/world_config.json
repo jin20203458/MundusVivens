@@ -1,4 +1,4 @@
-﻿{
+{
   "_Comment": "⚠️ [IMPORTANT] Day 2 이후의 API 폭주 방지(Staggering)를 위해, NPC들의 첫날(Day 1) 일과 종료 시각(Plan End Time)은 반드시 서로 다른 시각(예: NPC 1은 14:00, NPC 2는 18:00, NPC 3은 22:00)으로 시차를 두어 작성해야 합니다.",
   "Locations": [
     {
