@@ -1,4 +1,4 @@
-{
+﻿{
   "_Comment": "⚠️ [IMPORTANT] Day 2 이후의 API 폭주 방지(Staggering)를 위해, NPC들의 첫날(Day 1) 일과 종료 시각(Plan End Time)은 반드시 서로 다른 시각(예: NPC 1은 14:00, NPC 2는 18:00, NPC 3은 22:00)으로 시차를 두어 작성해야 합니다.",
   "Locations": [
     {
@@ -63,7 +63,7 @@
       ]
     },
     {
-      "SemanticName": "술집 (Tavern)",
+      "SemanticName": "술집 (Pub)",
       "Type": "Place",
       "Aliases": ["술집", "주점", "tavern"],
       "Coordinates": { "X": 30.0, "Y": 0.0, "Z": 40.0 },
@@ -118,7 +118,7 @@
         "CurrentDrive": "사제 카일과 암시장 정보원 발락 사이의 긴장 관계에 대한 확실한 비밀 소문을 수집하고 정리하는 것."
       },
       "Status": {
-        "CurrentLocation": "술집 (Tavern)",
+        "CurrentLocation": "술집 (Pub)",
         "Emotion": "평온",
         "Activity": "맥주컵 닦기"
       },
@@ -126,8 +126,8 @@
         "CoreMemories": []
       },
       "InitialSchedule": [
-        { "StartHour": 0, "EndHour": 8, "TargetLocation": "술집 (Tavern)", "Activity": "취침 및 휴식" },
-        { "StartHour": 8, "EndHour": 12, "TargetLocation": "술집 (Tavern)", "Activity": "바텐더 정비 및 청소" }
+        { "StartHour": 0, "EndHour": 8, "TargetLocation": "술집 (Pub)", "Activity": "취침 및 휴식" },
+        { "StartHour": 8, "EndHour": 12, "TargetLocation": "술집 (Pub)", "Activity": "바텐더 정비 및 청소" }
       ]
     },
     {
@@ -158,7 +158,7 @@
       },
       "InitialSchedule": [
         { "StartHour": 0, "EndHour": 8, "TargetLocation": "성당 (Church)", "Activity": "취침 및 기도" },
-        { "StartHour": 8, "EndHour": 12, "TargetLocation": "술집 (Tavern)", "Activity": "이교도 관찰" },
+        { "StartHour": 8, "EndHour": 12, "TargetLocation": "술집 (Pub)", "Activity": "이교도 관찰" },
         { "StartHour": 12, "EndHour": 16, "TargetLocation": "광장 (Square)", "Activity": "마을 포교 및 정화" }
       ]
     },
@@ -190,7 +190,7 @@
       },
       "InitialSchedule": [
         { "StartHour": 0, "EndHour": 9, "TargetLocation": "뒷골목 (Back Alley)", "Activity": "취침 및 정비" },
-        { "StartHour": 9, "EndHour": 15, "TargetLocation": "술집 (Tavern)", "Activity": "정보 수집 및 술마시기" },
+        { "StartHour": 9, "EndHour": 15, "TargetLocation": "술집 (Pub)", "Activity": "정보 수집 및 술마시기" },
         { "StartHour": 15, "EndHour": 20, "TargetLocation": "뒷골목 (Back Alley)", "Activity": "길드 장부 검토" }
       ]
     },
@@ -245,7 +245,7 @@
         "Activity": "사냥감 물색"
       },
       "InitialSchedule": [
-        { "StartHour": 0, "EndHour": 24, "TargetLocation": "술집 (Tavern)", "Activity": "배회 및 습격" }
+        { "StartHour": 0, "EndHour": 24, "TargetLocation": "술집 (Pub)", "Activity": "배회 및 습격" }
       ]
     },
     {
@@ -267,7 +267,7 @@
         "Activity": "대기"
       },
       "InitialSchedule": [
-        { "StartHour": 0, "EndHour": 24, "TargetLocation": "술집 (Tavern)", "Activity": "순찰" }
+        { "StartHour": 0, "EndHour": 24, "TargetLocation": "술집 (Pub)", "Activity": "순찰" }
       ]
     },
     {

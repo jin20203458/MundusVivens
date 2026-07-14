@@ -284,8 +284,8 @@ public static class LocationCoordinateRegistry
             if (protoType == ProtoLocationType.LocationTypePlace)
             {
                 var lowerName = config.SemanticName.ToLower();
-                if (lowerName.Contains("tavern") || lowerName.Contains("술집"))
-                    protoType = ProtoLocationType.LocationTypeTavern;
+                if (lowerName.Contains("pub") || lowerName.Contains("술집"))
+                    protoType = ProtoLocationType.LocationTypePub;
                 else if (lowerName.Contains("market") || lowerName.Contains("시장"))
                     protoType = ProtoLocationType.LocationTypeMarket;
                 else if (lowerName.Contains("square") || lowerName.Contains("광장"))
@@ -305,8 +305,8 @@ public static class LocationCoordinateRegistry
         else
         {
             var lowerName = (name ?? "").ToLower();
-            if (lowerName.Contains("tavern") || lowerName.Contains("술집"))
-                protoType = ProtoLocationType.LocationTypeTavern;
+            if (lowerName.Contains("pub") || lowerName.Contains("술집"))
+                protoType = ProtoLocationType.LocationTypePub;
             else if (lowerName.Contains("market") || lowerName.Contains("시장"))
                 protoType = ProtoLocationType.LocationTypeMarket;
             else if (lowerName.Contains("square") || lowerName.Contains("광장"))

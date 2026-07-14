@@ -520,7 +520,7 @@ public class DailyPlanService : IDailyPlanService, IDisposable
         // 기본값 채우기 (현재 위치 혹은 술집으로 채움)
         string fallbackLoc = !string.IsNullOrWhiteSpace(currentAgentLocation) 
             ? LocationCoordinateRegistry.ParseLocation(currentAgentLocation) 
-            : "술집 (Tavern)";
+            : "술집 (Pub)";
         for (int i = 0; i < 24; i++)
         {
             targetLocations[i] = fallbackLoc;

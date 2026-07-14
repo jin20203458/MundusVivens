@@ -722,7 +722,7 @@ public class MundusVivensGrpcService : MundusVivensGrpc.MundusVivensGrpcBase
 <output_format>
 반드시 아래 JSON 포맷으로만 응답하십시오.
 {
-  "target_location": "이동할 장소 (예: 술집 (Tavern))",
+  "target_location": "이동할 장소 (예: 술집 (Pub))",
   "activity": "새로 수행할 구체적인 행동 (예: 구석에서 조용히 술을 마신다)"
 }
 </output_format>

@@ -287,7 +287,7 @@ public class DialogueOrchestrator : IDialogueOrchestrator
 - 마을 광장 (Square)
 - 대장간 (Forge)
 - 뒷골목 (Back Alley)
-- 술집 (Tavern)
+- 술집 (Pub)
 </rules>
 
 <output_format>
@@ -310,8 +310,8 @@ public class DialogueOrchestrator : IDialogueOrchestrator
     { "belief_id": "belief_...", "subject": "npc_kyle", "content": "왜곡되어 말해진 정보 내용", "credibility_rating": 80, "speaker_id": "npc_eva" }
   ],
   "next_jobs": [
-    { "agent_id": "npc_eva", "target_location": "술집 (Tavern)", "activity": "Bart와 술집에서 술을 마시며 이야기를 나눈다" },
-    { "agent_id": "npc_bart", "target_location": "술집 (Tavern)", "activity": "Eva와 술집에서 술을 마시며 이야기를 나눈다" }
+    { "agent_id": "npc_eva", "target_location": "술집 (Pub)", "activity": "Bart와 술집에서 술을 마시며 이야기를 나눈다" },
+    { "agent_id": "npc_bart", "target_location": "술집 (Pub)", "activity": "Eva와 술집에서 술을 마시며 이야기를 나눈다" }
   ],
   "keywords": ["키워드1", "키워드2", "키워드3"]
 }
