@@ -58,6 +58,23 @@ public class DailyPlanService : IDailyPlanService, IDisposable
         var agents = _agentsAccessor();
         if (!agents.TryGetValue(agentId, out var agent)) return;
 
+        // 🆕 비지성체(몬스터/야수 등)는 대뇌 성찰 및 LLM 일과 계획 생성을 100% 우회
+        if (!agent.Persona.IsSentient)
+        {
+            agent.NextSchedule = new List<DailyScheduleItem>
+            {
+                new DailyScheduleItem
+                {
+                    StartHour = 0,
+                    EndHour = 23,
+                    TargetLocation = "술집 (Pub)",
+                    Activity = "배회 및 습격"
+                }
+            };
+            Console.WriteLine($"🐾 [Non-Sentient Bypass] '{agent.Persona.Name}'(비지성체)의 성찰 계획을 큐에서 제외하고 로컬 배회 스케줄을 즉시 주입했습니다 (LLM API 호출 우회).");
+            return;
+        }
+
         lock (_queueLock)
         {
             // 이미 큐에 있거나 이미 다음 일정이 준비되어 있으면 무시

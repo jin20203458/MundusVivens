@@ -237,7 +237,8 @@
         "Extroversion": 0.1,
         "Faction": "Wolf",
         "LongTermGoal": "배를 채우는 것",
-        "CurrentDrive": "근처의 인간 사냥"
+        "CurrentDrive": "근처의 인간 사냥",
+        "IsSentient": false
       },
       "Status": {
         "CurrentLocation": "늑대 서식지 (Wolf Nest)",

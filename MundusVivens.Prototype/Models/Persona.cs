@@ -10,5 +10,6 @@ public class Persona
     public double Extroversion { get; set; } = 0.5; // 0.0 ~ 1.0 (외향성 지수)
     public string LongTermGoal { get; set; } = string.Empty;
     public string CurrentDrive { get; set; } = string.Empty;
+    public bool IsSentient { get; set; } = true; // 🆕 지성체 여부 (기본값: true, 몬스터/동물은 false)
 }
 
