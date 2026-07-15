@@ -181,6 +181,7 @@ public class PersistenceService : IPersistenceService, IDisposable
             try
             {
                 _database!.DropCollection("agents");
+                _database!.DropCollection("cold_archive");
                 var col = _database.GetCollection<AgentInstance>("agents");
                 col.InsertBulk(initialAgents);
                 

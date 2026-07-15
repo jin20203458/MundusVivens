@@ -21,7 +21,7 @@ namespace MundusVivens.Prototype;
 
 public class Program
 {
-    public static void Main(string[] args)
+    public static async Task Main(string[] args)
     {
         Console.OutputEncoding = Encoding.UTF8;
         Console.WriteLine("=======================================================");
@@ -64,6 +64,8 @@ public class Program
         builder.Services.AddSingleton<IDialogueOrchestrator, DialogueOrchestrator>();
         builder.Services.AddSingleton<IPlayerDialogueManager, PlayerDialogueManager>();
         builder.Services.AddSingleton<IDailyPlanService, DailyPlanService>();
+        builder.Services.AddSingleton<BenchmarkProfiler>();
+
 
         // 데이터 영속성 관련 서비스 직접 인스턴스 생성 (BuildServiceProvider 경고 제거)
         var persistenceService = new PersistenceService();
@@ -126,7 +128,59 @@ public class Program
 
         var app = builder.Build();
 
+        // 🆕 벤치마크 모드 분기 처리
+        if (args.Length >= 2 && args[0] == "--benchmark-mode")
+        {
+            Console.WriteLine($"\n[Benchmark Mode] Running benchmark: {args[1]}");
+            var profiler = app.Services.GetRequiredService<BenchmarkProfiler>();
+            string mode = args[1];
+            int count = args.Length >= 3 && int.TryParse(args[2], out var parsedCount) ? parsedCount : 10;
+
+            try
+            {
+                if (string.Equals(mode, "dialogue", StringComparison.OrdinalIgnoreCase))
+                {
+                    await profiler.ProfileDialogueConsolidationAsync(count);
+                }
+                else if (string.Equals(mode, "memory", StringComparison.OrdinalIgnoreCase))
+                {
+                    profiler.ProfileMemoryArchitecture(count);
+                }
+                else if (string.Equals(mode, "reflection", StringComparison.OrdinalIgnoreCase))
+                {
+                    await profiler.ProfileReflectionScheduling(count);
+                }
+                else if (string.Equals(mode, "full-sim", StringComparison.OrdinalIgnoreCase))
+                {
+                    int days = args.Length >= 4 && int.TryParse(args[3], out var parsedDays) ? parsedDays : 2;
+                    await profiler.ProfileDailySimulation(count, days);
+                }
+                else if (string.Equals(mode, "threat", StringComparison.OrdinalIgnoreCase))
+                {
+                    profiler.ProfileThreatDecisionBatch(count);
+                }
+                else if (string.Equals(mode, "cascade", StringComparison.OrdinalIgnoreCase))
+                {
+                    int children = args.Length >= 4 && int.TryParse(args[3], out var parsedChildren) ? parsedChildren : 5;
+                    profiler.ProfileCausalCascade(count, children);
+                }
+                else
+                {
+                    Console.WriteLine($"⚠️ 지원하지 않는 벤치마크 모드입니다: {mode}");
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"❌ [Benchmark Error] 벤치마크 실행 중 예외 발생: {ex.Message}");
+                Console.WriteLine(ex.StackTrace);
+            }
+
+            Console.WriteLine("[Benchmark Mode] Finished benchmark process.");
+            return;
+        }
+
         #if DEBUG
+
         // Gracefully stop the diagnostic channels on app shutdown
         var lifetime = app.Services.GetRequiredService<IHostApplicationLifetime>();
         lifetime.ApplicationStopping.Register(() =>
