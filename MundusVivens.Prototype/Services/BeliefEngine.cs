@@ -89,8 +89,14 @@ public class BeliefEngine : IBeliefEngine
 
             if (listener.RelationshipMap.TryGetValue(speaker.AgentId, out var rel))
             {
+                double oldConfidence = directBelief.Confidence;
                 double impact = (rel.Trust / 100.0) * 0.2;
                 directBelief.Confidence = Math.Clamp(directBelief.Confidence + impact, 0.0, 1.0);
+
+                if (Math.Abs(directBelief.Confidence - oldConfidence) > 0.0001)
+                {
+                    PropagateCausalCascade(listener, directBelief.BeliefId);
+                }
             }
 
             bool isMutated = !originalBelief.Content.Trim().Equals(sharedContent.Trim(), StringComparison.OrdinalIgnoreCase);
@@ -135,8 +141,14 @@ public class BeliefEngine : IBeliefEngine
 
             if (listener.RelationshipMap.TryGetValue(speaker.AgentId, out var rel))
             {
+                double oldConfidence = matchedBelief.Confidence;
                 double impact = (rel.Trust / 100.0) * 0.2;
                 matchedBelief.Confidence = Math.Clamp(matchedBelief.Confidence + impact, 0.0, 1.0);
+
+                if (Math.Abs(matchedBelief.Confidence - oldConfidence) > 0.0001)
+                {
+                    PropagateCausalCascade(listener, matchedBelief.BeliefId);
+                }
             }
 
             bool isTextMutated = !matchedBelief.Content.Trim().Equals(sharedContent.Trim(), StringComparison.OrdinalIgnoreCase);

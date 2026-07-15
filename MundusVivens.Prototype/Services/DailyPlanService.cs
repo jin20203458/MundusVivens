@@ -311,7 +311,7 @@ public class DailyPlanService : IDailyPlanService, IDisposable
             .ToList();
 
         string episodesList = todayWitnessed.Any()
-            ? string.Join("\n", todayWitnessed.Select(b => $"- [{b.AcquiredAt:HH:mm}] 사건내용: {b.Content}"))
+            ? string.Join("\n", todayWitnessed.Select(b => $"- [ID: {b.BeliefId}] [{b.AcquiredAt:HH:mm}] {b.Content}"))
             : "오늘 특별한 사건이나 대화가 관찰되지 않았습니다.";
 
         // 기존 인상 목록 추출
@@ -361,7 +361,8 @@ public class DailyPlanService : IDailyPlanService, IDisposable
 
 <rules>
 [1부: 자아 성찰 (Reflection)]
-1. 오늘 겪은 단기 에피소드들을 종합하여 NPC가 깊이 깨닫거나 가치관에 반영할 장기 기억을 1~2개 도출하십시오.
+1. 오늘 겪은 단기 에피소드들을 종합하여 NPC가 깊이 깨닫거나 가치관에 반영할 장기 기억(core_facts)을 1~2개 도출하십시오.
+   - [중요] 각 깨달음을 기술할 때, 그 깨달음의 결정적인 원인이 된 에피소드의 ID를 'derived_from_id' 필드에 정확히 기재하십시오. 연관된 에피소드가 없다면 null로 기재하십시오.
 2. 만약 오늘 대화 상대방(Target Agent)과 관련된 사건을 겪었다면, 그에 대한 전반적 인상(Impression Summary)을 업데이트하여 주십시오. 
    - 기존의 인상이 있었다면 이를 완전히 덮어씌우지 말고, 오늘 겪은 일을 누적 반영하여 결합/수정(Append/Revise)된 형태로 작성해야 합니다.
 3. 당신의 궁극적인 장기 목표는 [{{agent.Persona.LongTermGoal}}]입니다. 오늘 하루 동안의 경험과 이 장기 목표를 고려하여, 내일 하루 동안 NPC가 최우선으로 추구해야 할 당면 동기(current_drive)를 구체적으로 수립하십시오.
@@ -416,7 +417,8 @@ public class DailyPlanService : IDailyPlanService, IDisposable
     "core_facts": [
       {
         "content": "장기 기억 내용 (예: Eva가 나에게 거짓말을 했다는 사실을 알았고, 그녀를 더 이상 신뢰할 수 없다)",
-        "importance": 8
+        "importance": 8,
+        "derived_from_id": "belief_reflection_example_id_or_null"
       }
     ],
     "relationship_updates": [
@@ -466,6 +468,14 @@ public class DailyPlanService : IDailyPlanService, IDisposable
                 {
                     if (string.IsNullOrWhiteSpace(insight.Content)) continue;
 
+                    // 할루시네이션 방어: derived_from_id가 실제로 에이전트의 MemoryBox에 존재하는지 검사
+                    string? validatedDerivedFrom = null;
+                    if (!string.IsNullOrWhiteSpace(insight.DerivedFromId) && 
+                        agent.MemoryBox.Beliefs.ContainsKey(insight.DerivedFromId))
+                    {
+                        validatedDerivedFrom = insight.DerivedFromId;
+                    }
+
                     var reflectionBelief = new Belief
                     {
                         BeliefId = $"belief_reflection_{Guid.NewGuid().ToString().Substring(0, 5)}",
@@ -475,11 +485,13 @@ public class DailyPlanService : IDailyPlanService, IDisposable
                         Confidence = Math.Clamp(insight.Importance / 10.0, 0.1, 1.0),
                         Salience = 1.0,
                         EmotionalCharge = Math.Clamp((insight.Importance / 10.0) * 0.5, 0.0, 1.0),
-                        AcquiredAt = DateTime.UtcNow
+                        AcquiredAt = DateTime.UtcNow,
+                        DerivedFrom = validatedDerivedFrom
                     };
 
                     agent.MemoryBox.AddOrUpdateBelief(reflectionBelief);
-                    Console.WriteLine($"🧠 [Memory Reflection] {agent.Persona.Name}에게 성찰 기억 추가: \"{insight.Content}\" (중요도: {insight.Importance})");
+                    string derivedFromLog = validatedDerivedFrom != null ? $" (파생 원본: {validatedDerivedFrom})" : "";
+                    Console.WriteLine($"🧠 [Memory Reflection] {agent.Persona.Name}에게 성찰 기억 추가: \"{insight.Content}\" (중요도: {insight.Importance}){derivedFromLog}");
                 }
             }
 
@@ -671,7 +683,8 @@ public record ReflectionResponse(
 
 public record ReflectionInsightDto(
     [property: JsonPropertyName("content")] string Content,
-    [property: JsonPropertyName("importance")] int Importance
+    [property: JsonPropertyName("importance")] int Importance,
+    [property: JsonPropertyName("derived_from_id")] string? DerivedFromId
 );
 
 public record RelationshipUpdateDto(
