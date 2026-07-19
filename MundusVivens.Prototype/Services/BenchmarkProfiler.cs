@@ -155,7 +155,7 @@ public class BenchmarkProfiler
         testAgent.MemoryBox.OnBeliefEvicted = evicted =>
         {
             evictions.Add(evicted);
-            _persistence.ArchiveBelief(testAgent.AgentId, evicted);
+            _persistence.EnqueueArchive(testAgent.AgentId, evicted);
         };
 
         // 1. Eviction Storm 측정
@@ -181,6 +181,16 @@ public class BenchmarkProfiler
         long evictionTime = sw.ElapsedMilliseconds;
         int hotCount = testAgent.MemoryBox.Beliefs.Count;
         int coldCount = evictions.Count;
+
+        // 비동기 쓰기 작업이 LiteDB에 모두 완료될 때까지 대기
+        Console.WriteLine("  [A.1] 비동기 쓰기 큐 플러시 대기 중...");
+        var flushSw = Stopwatch.StartNew();
+        while (_persistence.PendingArchiveCount > 0)
+        {
+            Thread.Sleep(10);
+        }
+        flushSw.Stop();
+        Console.WriteLine($"  [A.1] 플러시 완료 (대기 시간: {flushSw.ElapsedMilliseconds} ms, 대기 중인 큐: {_persistence.PendingArchiveCount}개)");
 
         // 2. Recall 비교 테스트 (O(N) vs Index Query)
         Console.WriteLine("  [B] Recall 속도 비교 테스트 진행 중...");
@@ -498,6 +508,37 @@ public class BenchmarkProfiler
             Console.WriteLine($"말단 신념('{leafBelief.BeliefId}')의 최종 확신도: {leafBelief.Confidence:F4} (정상 감쇄 완료)");
         }
         Console.WriteLine($"AI API 호출 횟수: 0 회 (100% 로컬 인과 그래프 계산)");
+        Console.WriteLine("=======================================================\n");
+
+        // 3. 순환 참조 테스트 (A -> B -> A)
+        Console.WriteLine("[Benchmark] 🔄 순환 참조(Circular Dependency) 방지 기능 자가 검증 시작");
+        agent.MemoryBox.Beliefs.Clear();
+        agent.MemoryBox.AddOrUpdateBelief(new Belief
+        {
+            BeliefId = "belief_circular_A",
+            Content = "Circular Belief A",
+            Confidence = 0.8,
+            DerivedFrom = "belief_circular_B",
+            Type = BeliefType.Witnessed
+        });
+        agent.MemoryBox.AddOrUpdateBelief(new Belief
+        {
+            BeliefId = "belief_circular_B",
+            Content = "Circular Belief B",
+            Confidence = 0.8,
+            DerivedFrom = "belief_circular_A",
+            Type = BeliefType.Witnessed
+        });
+        
+        try
+        {
+            _beliefEngine.PropagateCausalCascade(agent, "belief_circular_A");
+            Console.WriteLine("[Benchmark] ✅ 순환 참조 방지 테스트 성공: StackOverflowException 없이 정상 종료되었습니다.");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[Benchmark] ❌ 순환 참조 방지 테스트 실패: {ex.Message}");
+        }
         Console.WriteLine("=======================================================\n");
     }
 
