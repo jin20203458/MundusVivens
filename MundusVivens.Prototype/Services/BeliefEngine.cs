@@ -246,12 +246,33 @@ public class BeliefEngine : IBeliefEngine
             {
                 _lastDecayedTicks.Remove($"{agent.AgentId}_{id}");
                 Console.WriteLine($"[BeliefEngine] 🗑️ [기억 망각/도태] {agent.Persona.Name}이(가) '{removed.Content}' 정보를 오랜 방치로 잊었습니다 (Salience: {removed.Salience:F3})");
+                agent.MemoryBox.OnBeliefEvicted?.Invoke(removed);
             }
         }
     }
 
     public void PropagateCausalCascade(AgentInstance agent, string parentBeliefId)
     {
+        PropagateCausalCascadeInternal(agent, parentBeliefId, 0, new HashSet<string>());
+    }
+
+    private void PropagateCausalCascadeInternal(AgentInstance agent, string parentBeliefId, int currentDepth, HashSet<string> visited)
+    {
+        // 1. 최대 깊이 가드 (5레벨 초과 시 더 깊은 전파를 중단하여 OOM 및 지수 연산 방지)
+        if (currentDepth > 5)
+        {
+            Console.WriteLine($"[BeliefEngine] ⚠️ Warning: PropagateCausalCascade depth limit reached ({currentDepth}). Halting further propagation.");
+            return;
+        }
+
+        // 2. 순환 참조 가드 (이미 경로에 존재하는 노드일 경우 순환 궤도 진입을 방지하여 StackOverflow 예방)
+        if (visited.Contains(parentBeliefId))
+        {
+            Console.WriteLine($"[BeliefEngine] ⚠️ Warning: Circular dependency detected for BeliefId '{parentBeliefId}'. Halting propagation to prevent infinite loop.");
+            return;
+        }
+        visited.Add(parentBeliefId);
+
         if (!agent.MemoryBox.Beliefs.TryGetValue(parentBeliefId, out var parentBelief)) return;
 
         var children = agent.MemoryBox.Beliefs.Values
@@ -266,8 +287,8 @@ public class BeliefEngine : IBeliefEngine
             
             Console.WriteLine($"[BeliefEngine] 🔗 Causal cascade: Belief '{child.Content}' confidence updated {oldConfidence:F2} -> {child.Confidence:F2} (derived from parent '{parentBeliefId}')");
             
-            // Recursively propagate
-            PropagateCausalCascade(agent, child.BeliefId);
+            // Recursively propagate, copying the visited set per branch to allow branching DAGs but prevent cycles.
+            PropagateCausalCascadeInternal(agent, child.BeliefId, currentDepth + 1, new HashSet<string>(visited));
         }
     }
 

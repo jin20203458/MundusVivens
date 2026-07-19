@@ -5,6 +5,9 @@ using System.IO;
 using System.Linq;
 using LiteDB;
 using MundusVivens.Prototype.Models;
+using System.Threading;
+using System.Threading.Channels;
+using System.Threading.Tasks;
 
 namespace MundusVivens.Prototype.Services;
 
@@ -14,6 +17,8 @@ public interface IPersistenceService
     void UpsertAgent(AgentInstance agent);
     void ResetDatabase(IEnumerable<AgentInstance> initialAgents);
     void ArchiveBelief(string agentId, Belief belief);
+    void EnqueueArchive(string agentId, Belief belief);
+    int PendingArchiveCount { get; }
     List<Belief> RecallBeliefs(string agentId, string? location, string? targetAgentId, List<string>? keywords, int limit = 5);
 }
 
@@ -22,6 +27,18 @@ public class PersistenceService : IPersistenceService, IDisposable
     private readonly string _dbPath;
     private LiteDatabase? _database;
     private readonly object _dbLock = new();
+
+    // Async Write-Behind Queue
+    private record ArchiveEntry(string AgentId, Belief Belief);
+    private readonly Channel<ArchiveEntry> _archiveChannel =
+        Channel.CreateBounded<ArchiveEntry>(new BoundedChannelOptions(2048)
+        {
+            FullMode = BoundedChannelFullMode.DropOldest,
+            SingleReader = true,
+            SingleWriter = false
+        });
+    private Task? _archiveWorkerTask;
+    private readonly CancellationTokenSource _archiveWorkerCts = new();
 
     public PersistenceService()
     {
@@ -50,6 +67,10 @@ public class PersistenceService : IPersistenceService, IDisposable
                 var col = _database.GetCollection<ArchivedBelief>("cold_archive");
                 col.EnsureIndex(x => x.AgentId);
                 Console.WriteLine("[Persistence] cold_archive에 AgentId 인덱스 적용 완료.");
+
+                // Start Write-Behind Worker
+                _archiveWorkerTask = Task.Run(() => RunArchiveWorkerAsync(_archiveWorkerCts.Token));
+                Console.WriteLine("[Persistence] Archive Write-Behind Worker started.");
             }
             catch (Exception ex)
             {
@@ -138,7 +159,7 @@ public class PersistenceService : IPersistenceService, IDisposable
 
                 foreach (var agent in list)
                 {
-                    agent.MemoryBox.OnBeliefEvicted = evicted => ArchiveBelief(agent.AgentId, evicted);
+                    agent.MemoryBox.OnBeliefEvicted = evicted => EnqueueArchive(agent.AgentId, evicted);
                     dict[agent.AgentId] = agent;
                 }
                 
@@ -224,6 +245,47 @@ public class PersistenceService : IPersistenceService, IDisposable
         }
     }
 
+    public void EnqueueArchive(string agentId, Belief belief)
+    {
+        if (!_archiveChannel.Writer.TryWrite(new ArchiveEntry(agentId, belief)))
+        {
+            Console.WriteLine($"[Persistence Warning] Archive queue full, dropping oldest for agent {agentId}, belief: {belief.BeliefId}");
+        }
+    }
+
+    public int PendingArchiveCount => _archiveChannel.Reader.Count;
+
+    private async Task RunArchiveWorkerAsync(CancellationToken ct)
+    {
+        Console.WriteLine("[Persistence] Archive Write-Behind Worker loop started.");
+        try
+        {
+            // Read all items from the channel.
+            // Using CancellationToken.None to ensure that completed writer allows flushing remaining items.
+            await foreach (var entry in _archiveChannel.Reader.ReadAllAsync(CancellationToken.None))
+            {
+                if (ct.IsCancellationRequested)
+                {
+                    Console.WriteLine("[Persistence] Archive Write-Behind Worker cancellation requested. Stopping loop early.");
+                    break;
+                }
+                try
+                {
+                    ArchiveBelief(entry.AgentId, entry.Belief);
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[Persistence Error] Background archive write failed: {ex.Message}");
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[Persistence Error] Archive worker error: {ex.Message}");
+        }
+        Console.WriteLine("[Persistence] Archive Write-Behind Worker loop terminated.");
+    }
+
     public List<Belief> RecallBeliefs(string agentId, string? location, string? targetAgentId, List<string>? keywords, int limit = 5)
     {
         lock (_dbLock)
@@ -302,6 +364,22 @@ public class PersistenceService : IPersistenceService, IDisposable
 
     public void Dispose()
     {
+        // First signal that no more items will be written, allowing the worker to flush remaining entries
+        _archiveChannel.Writer.Complete();
+        try
+        {
+            // Wait up to 10 seconds for the channel to empty and the task to complete naturally
+            _archiveWorkerTask?.Wait(TimeSpan.FromSeconds(10));
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[Persistence Error] Wait for worker task failed: {ex.Message}");
+        }
+        
+        // Cancel the worker token to force stop if it's still running (e.g. timed out waiting)
+        _archiveWorkerCts.Cancel();
+        _archiveWorkerCts.Dispose();
+
         lock (_dbLock)
         {
             if (_database != null)
