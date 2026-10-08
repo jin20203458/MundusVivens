@@ -16,8 +16,8 @@ Focus: Gemini API cost optimization, LiteDB hot/cold memory hierarchy, and async
 </critical_rules>
 
 <context_triggers>
-- **Knowledge Base**: If modifying LLM/memory logic, read `../Obsidian.Agent/MundusVivens/docs/02_agent_design.md`.
-- **Troubleshooting**: If debugging, read `../Obsidian.Agent/troubleshooting/mundus_vivens.md` before coding.
+- **Agent Architecture**: Gemini API prompts, LiteDB memory hierarchy, scheduler -> `../Obsidian.Agent/MundusVivens/docs/02_agent_design.md`
+- **Troubleshooting**: Runtime errors, memory eviction bugs, runbook -> `../Obsidian.Agent/troubleshooting/mundus_vivens.md`
 </context_triggers>
 
 <post_action>
