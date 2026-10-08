@@ -6,7 +6,7 @@ Focus: Gemini API cost optimization, LiteDB hot/cold memory hierarchy, and async
 - **API/Cost**: Consolidate LLM prompts (use JSON mode). Skip API calls for physical/transit states.
 - **Memory**: Respect LiteDB hot/cold eviction hierarchies. Never load full collections into RAM.
 - **Concurrency**: Use `async`/`await` throughout. NEVER use `.Result`, `.Wait()`, or `.GetAwaiter().GetResult()`.
-- **Formatting**: Strictly follow the target file's style.
+- **Formatting**: Strictly follow the target file's style; zero decorative emojis.
 </engineering_rules>
 
 <critical_rules>
